@@ -1,0 +1,3118 @@
+----Check ZM57
+--select * from ZM57 where IPCSO=''
+if (select count(*) from t_download_matmas_CP60DW)=0
+begin
+select 'matmas is 0'
+return
+end
+
+if (select count(*) from t_download_org_bom_CP60DW)=0
+begin
+select 'BOM is 0'
+return
+end
+
+
+/*
+drop table #INV
+drop table #init
+drop table #init2
+drop table #Mat_PF
+drop table #Mat_SA
+drop table #MPinit
+drop table #MPmid
+drop table #MPresult
+--drop table #Dock
+drop table #init_tmp_OPO
+drop table #FSD
+drop table #TT
+drop table #ETA
+--(cancel)drop table #BOMinit
+--(cancel)drop table #mid
+--(cancel)drop table #final
+drop table #init131
+drop table #mid131
+drop table #final131
+drop table #finalPF
+drop table #tmp2 
+drop table #tmp3
+drop table #initAssy
+drop table #midAssy
+drop table #finalAssy
+drop table #GetSub
+drop table #AA
+drop table #AAmid
+--drop table #b2b
+drop table #FindQty
+drop table #midFindQty
+----Need to keep
+drop table #tmp_OPO
+drop table #result
+drop table #AAResult
+drop table #Alternative
+
+
+--drop table #oriINV
+drop table #tmpSeq
+drop table #tmpWH
+drop table #midWH
+drop table #altWH
+drop table #WHResult
+Drop table #ETAfinal
+drop table #WHFinal
+drop table #tmpETA
+drop table #WHmid
+drop table #WHPN
+drop table #midFinal
+drop table #WHcount
+drop table #ETAQty  
+drop table #OPOSummary
+drop table #DD
+drop table #MV
+drop table #VD
+drop table #OPODetail
+drop table #ShortageDetail
+*/
+-------(2019/04/30) adjust Format
+update icc_t_download_nb_po set PO_Qty=replace(PO_Qty,',',''),Open_Qty=replace(Open_Qty,',','')
+
+------------Get Open PO (ALL)
+create table #INV(POVendor varchar(20),MaterialProperty varchar(20),MatNo varchar(20),Qty int,INVDate char(10),Remark varchar(8000))
+
+insert #INV
+    select POVendor,MP,MatNo,Qty,INVDate,'' from Ivan_CurrentINV  where Customer='HP' and INVDate>=convert(char(10),getdate(),111) 
+    
+
+
+create table #init_tmp_OPO(Site varchar(20),PO varchar(20),SO varchar(20),Item varchar(20),IECPO varchar(20),POItem varchar(20),
+CPQNo varchar(20),IECPN varchar(20),ProductFamily varchar(20),POVendor varchar(20),
+POReceiveDate char(10),SORequestDate char(10),CustETADate char(10),PO_Type varchar(20),Model_Status varchar(20),FCST_Status varchar(20),PType varchar(20),TCDate char(10),NeedShipDate char(10),
+POQty int,DNQty int,DockQty int,ShipQty int,OpenQty int,Shortage varchar(10),PIC varchar(20),MP varchar(10),Escalation varchar(100),EscalationDate varchar(100),Remark varchar(1000))
+
+create table #tmp_OPO(iid int identity(1,1),Site varchar(20),PO varchar(20),SO varchar(20),Item varchar(20),IECPO varchar(20),POItem varchar(20),
+CPQNo varchar(20),IECPN varchar(20),ProductFamily varchar(20),POVendor varchar(20),
+POReceiveDate char(10),SORequestDate char(10),CustETADate char(10),PO_Type varchar(20),Model_Status varchar(20),FCST_Status varchar(20),PType varchar(20),TCDate char(10),NeedShipDate char(10),
+POQty int,DNQty int,DockQty int,ShipQty int,OpenQty int,Shortage varchar(10),PIC varchar(20),MP varchar(10),Escalation varchar(100),EscalationDate varchar(100),Remark varchar(1000))
+
+--(2015/03/16) change Date850 (PO Issue Date) to PO_Date (Customer PO Date)
+--(2015/03/16) Remove NeedShipDate calculation ,use SO_First_Date to instead
+insert #init_tmp_OPO
+select distinct Site,PO,SO,Item,'','',rtrim(CPQPN),IECPN,ProductFamily,'',PO_Date,left(SO_ReqDate,4)+'/'+substring(SO_ReqDate,5,2)+'/'+substring(SO_ReqDate,7,2),'',
+isnull(PO_Type,''),isnull(Model_Status,''),isnull(FCST_Status,''),'',TCDate='',NeedShipDate=SO_First_Date,
+POQty=convert(int,Qty850),0,0,Ship=0,OpenQty=0,'','','','','','' from Service_APD a,SiteMapping b where 
+a.Site=b.ZS92Site and b.Customer='HP' and not ZS92Site=''/*IES_DNPGI='0000/00/00' and*/ and (SO like '11%' or SO like '2%') --and Plant in ('CP81','CP60','TP01')
+
+--(2017/11/06) Add AIO DOA PO to share the material per CQ requests..
+--Copy SO ,Item to PO ,POItem for this kind of special items .
+insert #init_tmp_OPO
+select distinct Site,PO,SO,Item,SO,Item,rtrim(CPQPN),IECPN,ProductFamily,'ICC',PO_Date,left(SO_ReqDate,4)+'/'+substring(SO_ReqDate,5,2)+'/'+substring(SO_ReqDate,7,2),'',
+'REG','MP','NO','NB',TCDate='',NeedShipDate=SO_First_Date,
+POQty=convert(int,Qty850),0,0,Ship=0,OpenQty=0,'','','','','','' from Service_APD a,SiteMapping b where 
+a.Site=b.ZS92Site and b.Customer='HP_AIODOA' and not ZS92Site='' and SO like '2%'
+
+
+
+--update DN Qty
+update #init_tmp_OPO set DNQty=b.DNQty from #init_tmp_OPO a,
+(select Site,IECPN,SO,Item,DNQty=convert(int,sum(Qty856)) from Service_APD where Qty856>0  and PndGIDate='0000/00/00' and not IES_DNPGI='0000/00/00'
+group by Site,IECPN,SO,Item) as b where a.Site=b.Site and a.SO=b.SO and a.Item=b.Item and a.IECPN=b.IECPN
+
+
+----Update Ship Qty
+update #init_tmp_OPO set ShipQty=b.ShipQty from #init_tmp_OPO a,
+(select Site,IECPN,SO,Item,ShipQty=convert(int,sum(Qty856)) from Service_APD where Qty856>0  and not PndGIDate='0000/00/00'--and not IES_DNPGI='0000/00/00'
+group by Site,IECPN,SO,Item) as b where a.Site=b.Site and a.SO=b.SO and a.Item=b.Item and a.IECPN=b.IECPN
+
+
+---Update POVendor ,PO,Type ....
+update #init_tmp_OPO set POVendor=b.POVendor from #init_tmp_OPO a,ZSD65 b where a.SO=b.SO and a.Item=b.SOItem
+update #init_tmp_OPO set POVendor='IES' where POVendor='IPE-CP81'
+update #init_tmp_OPO set POVendor='ICC' where POVendor='ICC-CP60'
+update #init_tmp_OPO set POVendor='ITH' where POVendor='ITH-TH02'
+update #init_tmp_OPO set IECPO=b.IPCSO,POItem=b.IPCSOItem,PType=b.POType from #init_tmp_OPO a,ZM57$ b where a.SO=b.IECSO and a.Item=b.IECSPItem and a.IECPO=''
+
+
+
+----(2017/11/06) need to sort out the HP_AIODOA SOs) ...
+update #init_tmp_OPO set IECPO=convert(varchar(20),convert(decimal(20,0),b.IPCSO)),POItem=b.IPCSOItem,PType=b.POType from 
+#init_tmp_OPO a,
+(
+select * from (
+select IECSO,IECSPItem,IPCSO,IPCSOItem,POType from #init_tmp_OPO a,ZM57 b where a.SO=b.IECSO and a.Item=b.IECSPItem and a.IECPO='' and not a.SO in (
+select distinct SO from Service_APD a,SiteMapping b where 
+a.Site=b.ZS92Site and b.Customer='HP_AIODOA' and not ZS92Site='' and SO like '2%')
+) as a where not IPCSO=''
+) as b where a.SO=b.IECSO and a.Item=b.IECSPItem and a.IECPO='' 
+
+--select * from #init_tmp_OPO where SO='1108659030'
+/*
+------Find ETA date of 2 ,4,5,9 weeks .
+create table #TT(iid int identity(1,1),IssueDate varchar(10))
+create table #ETA(IssueDate varchar(10),ETAWeek int,ETADate varchar(10))
+
+insert #TT
+select distinct POReceiveDate from #init_tmp_OPO
+
+declare @x int
+declare @y int
+declare @dd varchar(10)
+select @x=min(iid) from #TT
+select @y=max(iid) from #TT
+while @x<=@y
+begin
+-------Change Date to CalendarDate
+-------(2014/7/17) --> -7 days from T&C days .
+    select @dd=IssueDate from #TT where iid=@x
+    insert #ETA
+       select @dd,'3',convert(char(10),max(Dt),111) from(
+       select Top 14/*10*/ DID,Dt from Calendar3 where Dt>convert(datetime,@dd+' 00:00') /*and WorkingDay='1'*/) as a 
+    insert #ETA
+       select @dd,'4',convert(char(10),max(Dt),111) from(
+       select Top 21/*20*/ DID,Dt from Calendar3 where Dt>convert(datetime,@dd+' 00:00') /*and WorkingDay='1'*/) as a 
+    insert #ETA
+       select @dd,'6',convert(char(10),max(Dt),111) from(
+       select Top 35/*25*/ DID,Dt from Calendar3 where Dt>convert(datetime,@dd+' 00:00') /*and WorkingDay='1'*/) as a        
+    insert #ETA
+       select @dd,'8',convert(char(10),max(Dt),111) from(
+       select Top 49/*25*/ DID,Dt from Calendar3 where Dt>convert(datetime,@dd+' 00:00') /*and WorkingDay='1'*/) as a    
+    insert #ETA
+       select @dd,'10',convert(char(10),max(Dt),111) from(
+       select Top 63/*45*/ DID,Dt from Calendar3 where Dt>convert(datetime,@dd+' 00:00') /*and WorkingDay='1'*/) as a 
+   
+    select @x=@x+1
+end
+
+----(2013/05/03) manual modify due to PO_Type Error .
+update #init_tmp_OPO set PO_Type='REG' where IECPO='4505982175' and POItem='10' and IECPN='PF3731AMB002' 
+
+----Update IECETA
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.FCST_Status in ('UPSID','NO') and a.Model_Status='MP' and left(a.IECPN,2) in ('PF','PO','SF','60') and b.ETAWeek='6'
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.FCST_Status in ('UPSID','NO') and a.Model_Status='EOL' and left(a.IECPN,2) in ('PF','PO','SF','60') and b.ETAWeek='10'
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.FCST_Status in ('IN','FLEX') and left(a.IECPN,2) in ('PF','PO','SF','60') and b.ETAWeek='3'
+
+----(2014/09/19) UFD PO add 10 weeks whatever it is In or Out of FCST
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.PO_Type='UFD' and left(a.IECPN,2) in ('PF','PO','SF','60') and b.ETAWeek='10'
+
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.FCST_Status='IN' and left(a.IECPN,2)='JF' and b.ETAWeek='4'
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and not a.FCST_Status='IN' and left(a.IECPN,2)='JF' and b.ETAWeek='8'
+
+----NPI set 3 weeks .
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.PO_Type in ('NPI','NPI*') and left(a.IECPN,2) in ('PF','PO','SF','60') and b.ETAWeek='3'
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.PO_Type in ('NPI','NPI*') and left(a.IECPN,2)='JF' and b.ETAWeek='4'
+
+-------(2014/10/21) Add 2md NPI TAT (6 weeks)
+----NPI2 set 6 weeks .
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.PO_Type='NPI2' and left(a.IECPN,2) in ('PF','PO','SF','60') and b.ETAWeek='6'
+update #init_tmp_OPO set TCDate=b.ETADate from #init_tmp_OPO a,#ETA b where a.POReceiveDate=b.IssueDate and a.PO_Type='NPI2' and left(a.IECPN,2)='JF' and b.ETAWeek='6'
+
+
+
+---Update CustETADate (-7 days is the Cust NeedShipDate)
+Update #init_tmp_OPO set CustETADate=(select convert(char(10),max(Dt),111) from Calendar3 where Dt<=dateadd(dd,-7,convert(datetime,SORequestDate+' 00:00')) and WorkingDay=1)
+
+
+---Update TCDate='' to '2099/01/01'  
+update #init_tmp_OPO set TCDate='2099/01/01' where TCDate=''
+
+
+----Compare NeedShipDate & CustETADate
+update #init_tmp_OPO set NeedShipDate=case when TCDate>=CustETADate then TCDate else CustETADate end
+update #init_tmp_OPO set NeedShipDate=TCDate where PO_Type in ('NPI','NPI*')
+*/
+
+update #init_tmp_OPO set OpenQty=POQty-ShipQty
+delete from #init_tmp_OPO where OpenQty=0
+
+
+
+-----Update Site to MSite
+update #init_tmp_OPO set Site=b.MSite from #init_tmp_OPO a,(select distinct MSite,ZS92Site from SiteMapping where not ZS92Site='') as b where a.Site=b.ZS92Site
+
+---Update PIC
+update #init_tmp_OPO set PIC=b.PIC from #init_tmp_OPO a,OSSPPIC b where a.Site=b.Site
+
+
+----Define MP
+update #init_tmp_OPO set MP='Y' where IECPN like '6%' and MP='' --Raw Material
+update #init_tmp_OPO set MP='N' where IECPN like 'PF%1' and MP='' --Old PF 
+
+----(2023/10/16) change from EOL_Dt -3m to Lock_D
+update #init_tmp_OPO set MP=b.MP from #init_tmp_OPO a,
+(select IECPN,StopProduceDate=dateadd(mm,0,max(Lock_Dt)),MP=case when dateadd(mm,0,max(Lock_Dt))>=getdate() then 'Y' else 'N' end from (
+select IECPN,Lock_Dt from
+(select distinct IECPN from #init_tmp_OPO /*where left(IECPN,2) in ('PF','PO','SF','JF') and IECPN like '%2'*/) as a inner join
+(select CPQNo,Lock_Dt from PNModel a,ModelID b where a.FamilyNo=b.FamilyNo ) as b on a.IECPN=b.CPQNo
+) as a group by IECPN
+) as b where a.IECPN=b.IECPN and a.MP=''
+
+---Fill not find data MP to 'Y'
+update #init_tmp_OPO set MP='Y' where MP=''
+
+--Update Escalation
+update #init_tmp_OPO set Escalation=b.Escalation,EscalationDate=b.[Escalation Date],Remark=b.Remark from #init_tmp_OPO a,OPO$ b where a.Site=b.Site and a.SO=b.SO and a.IECPN=b.IECPN
+
+---------------------------------
+--(2013/08/09)------------Change NeedShipDate due to HP waives .
+--update #init_tmp_OPO set NeedShipDate='2099/01/01' where IECPN='PFAS02AVG002'
+update #init_tmp_OPO set NeedShipDate='2099/01/01' where IECPO='4505968810' and POItem='220' and IECPN='PFAH01EWL002'
+
+
+update #init_tmp_OPO set NeedShipDate='2013/07/05' where IECPO in ('4505852628','4505852627','4505812689','4505852626') and POItem='10'
+
+------(2013/08/09) ---Force to change NeedShipDate to 2013/08/23 for Teleplan per Cindy's request .
+--select * from #init_tmp_OPO where Site='TELEPLAN' and Model_Status='MP' and NeedShipDate>'2013/08/23'
+update #init_tmp_OPO set NeedShipDate='2013/08/23' where Site='TELEPLAN' and Model_Status='MP' and POReceiveDate<='2013/08/13' and NeedShipDate>'2013/08/23'
+
+
+---- (2013/08/26) Force to change NeedShipDate for SMS UXD order
+update #init_tmp_OPO set NeedShipDate=b.NeedShipDate from #init_tmp_OPO a,ArrangeNeedShipDate b where a.IECPO=b.IECPO and a.POItem=b.POItem and a.IECPN=b.IECPN
+
+-----(2015/06/18) resume per LG requests .
+-----(2015/03/16) Remove FSD calculation ,use SAP Date to instead .
+-----(2018/03/20) Change 1 month to 28 days for FSD calculation .
+-----Change NPI order's NeedShipDate to FSD Date if the NeedShipDate earlier than FSD date .
+create table #FSD(IECPN varchar(20),FSD varchar(20),FRUShipDate varchar(20))
+
+insert #FSD
+select distinct IECPN,'','' from #init_tmp_OPO where PO_Type like 'NPI%'
+
+update #FSD set FSD=b.FSD from #FSD a,
+(
+select ODMPartNumber,FSD=min(FSD) from (
+select ODMPartNumber,FSD from
+(
+select * from
+(select distinct SpareKitPN,ODMPartNumber from SPB where ODMPartNumber in (select distinct IECPN from #FSD)) as a left join
+(select PN,FSD from [IEC1-EIS-DB-P02].EService.dbo.PNProject) as b on a.SpareKitPN=b.PN
+) as a where not FSD is null
+) as a group by ODMPartNumber
+) as b where a.IECPN=b.ODMPartNumber
+
+select * from #FSD where FSD=''
+update #FSD set FSD='1900/01/01' where FSD=''
+
+update #FSD set FRUShipDate=convert(char(10),dateadd(dd,-28,convert(datetime,FSD+' 00:00')),111)
+update #init_tmp_OPO set NeedShipDate=b.FRUShipDate from #init_tmp_OPO a,#FSD b where a.PO_Type like 'NPI%' and a.IECPN=b.IECPN and FRUShipDate>NeedShipDate and not b.FSD='1/1/2050'
+
+---(2018/05/21) manual add 2 POs for PITA K/Bs which ship from Taipei
+update #init_tmp_OPO set IECPO=SO,POItem=Item,POVendor='ICC',PType='NB' where SO in ('2000495191','2000495192','2000495383','2000495384','2000495387')
+
+
+-----(2014/01/14)Insert the old OPO which not existed in Service_APD back to #init_tmp_OPO
+/*
+insert #init_tmp_OPO
+select 
+Site,PO,SO,Item,IECPO,POItem,CPQNo,IECPN,ProductFamily,POVendor,POReceiveDate,SORequestDate,CustETADate,PO_Type,Model_Status,FCST_Status,PType ,TCDate ,NeedShipDate ,
+POQty,DNQty,DockQty,ShipQty,OpenQty,Shortage,PIC,MP,Escalation,EscalationDate,Remark
+ from OPS_tmp_OPO where iid in(
+select a.iid from(
+select a.iid,b.SO from 
+(select * from OPS_tmp_OPO) as a left join
+(select * from #init_tmp_OPO) as b on a.Site=b.Site and a.PO=b.PO and a.SO=b.SO and a.Item=b.Item and a.IECPN=b.IECPN
+) as a where SO is null
+)
+*/
+------Remove JAbil NA PO
+delete from #init_tmp_OPO where Site in ('JABIL NA','FLEXTRONIC AP')
+
+-----(2024/12/31) Set TR & particlaur PO's NeedShipDate to earlierDate by Table TRNSD$
+--select * from  #init_tmp_OPO a,TRNSD$ b where a.PO=b.PO and a.CPQNo=b.CPQPN
+update #init_tmp_OPO set NeedShipDate=b.NeedShipDate from #init_tmp_OPO a,TRNSD$ b where a.PO=b.PO and a.CPQNo=b.CPQPN
+
+
+-------(2020/11/24 Remove Hermon2 POs from Normal OPO)
+insert #tmp_OPO
+   select distinct * from #init_tmp_OPO where not PO_Type in ('NPIH','ALC') and POVendor='ICC' order by NeedShipDate,POReceiveDate,PO,IECPN       
+
+
+
+-----Find MP=Y with Board Level
+---------------*****
+--------------------
+---Need to check no POVendor
+delete from #tmp_OPO where IECPO='4505255711' and POItem='160'
+--select * from #tmp_OPO where POVendor=''
+update #tmp_OPO set POVendor='IES' where IECPN='PF1901AOA002'
+
+----(2018/10/26) Add POVendor for special order.
+update #tmp_OPO set POVendor='ICC',PType='NB' where SO='2000496245'
+
+delete from #tmp_OPO where POVendor=''
+--update #tmp_OPO set POVendor='IES' where iid='1894'
+--update #tmp_OPO set POVendor='ICC' where not iid='1894' and Site='TATUNG'
+----Special Order ,set NeedShipDate to '2013/07/05'
+/*
+select a.iid,a.ProductFamily,b.* from
+(select * from #tmp_OPO where PO_Type in ('NPI','NPI*')) as a left join
+(select * from ModelID) as b on a.ProductFamily=b.SAPPlatform
+*/
+--(2016/04/22) add '*' to identify SPM's responisibility
+update #tmp_OPO set PO_Type=rtrim(PO_Type)+'*' from #tmp_OPO a,ModelID b where a.ProductFamily=b.SAPPlatform and a.PO_Type in ('NPI','NPI*') and POReceiveDate<=FCS_Dt
+--select a.iid,a.ProductFamily,a.PO_Type,a.POReceiveDate,b.FCS_Dt from #tmp_OPO a,ModelID b where a.ProductFamily=b.SAPPlatform and a.PO_Type in ('NPI','NPI*') and POReceiveDate<FCS_Dt
+
+/* NPInoMV removed 
+--(208/04/27) NO MV M/B need to requested from Production line
+update #tmp_OPO set PO_Type='NPI' where PO_Type='NPI*' and substring(IECPN,8,2)='MB' and IECPN in (select IECPN from NPInoMV) 
+--------
+--select * from #tmp_OPO where SO in ('2000495191','2000495192')
+*/
+
+/*
+drop table #MPinit
+drop table #MPmid
+drop table #MPresult
+*/
+--create table #MPIECPN(IECPN varchar(20),ASPN varchar(20))
+create table #MPinit(POVendor varchar(20),IECPN varchar(20),ASPN varchar(20),SAPN varchar(20),AG varchar(20),Priority varchar(20),Usage varchar(20),Item varchar(20),Qty float)
+create table #MPmid(POVendor varchar(20),IECPN varchar(20),ASPN varchar(20),SAPN varchar(20),AG varchar(20),Priority varchar(20),Usage varchar(20),Item varchar(20),Qty float)
+create table #MPresult(POVendor varchar(20),IECPN varchar(20),ASPN varchar(20),SAPN varchar(20),AG varchar(20),Priority varchar(20),Usage varchar(20),Item varchar(20),Qty float)
+
+declare @Bi int
+select @Bi=0
+
+/*
+insert #MPinit
+   select distinct POVendor,IECPN,IECPN,Component,Alternative_item_group,Priority,Usage_probability,Item_number,Quantity from (
+   select distinct POVendor,IECPN from #tmp_OPO where /*MP='Y' and*/ not IECPN like '6%' and POVendor='IES') as a,t_download_org_bom_CP81DW b where a.IECPN=b.Material and left(b.Component,1) in ('1','2')
+*/
+
+insert #MPinit
+   select distinct POVendor,IECPN,IECPN,Component,Alternative_item_group,Priority,Usage_probability,Item_number,Quantity from (
+   select distinct POVendor,IECPN from #tmp_OPO where /*MP='Y' and*/ not IECPN like '6%' and POVendor='ICC') as a,t_download_org_bom_CP60DW b where a.IECPN=b.Material and left(b.Component,1) in ('1','2')
+   and not left(b.Component,3)='146'
+
+
+
+update #MPinit set POVendor=case when ShipSite='SH' then 'IES' else 'ICC' end from #MPinit a,PNSite b where a.IECPN=b.IECPN and a.POVendor=''
+
+while (select count(*) from #MPinit)>0
+begin
+insert #MPresult
+    select distinct * from #MPinit where SAPN like '13%'  
+
+delete from #MPinit  where SAPN like '13%'  
+
+insert #MPmid
+   select distinct * from #MPinit
+
+delete from #MPinit
+
+/*
+insert #MPinit
+   select distinct a.POVendor,a.IECPN,a.SAPN,b.Component,b.Alternative_item_group,b.Priority,b.Usage_probability,b.Item_number+convert(char(1),@Bi),Quantity from
+   #MPmid a,t_download_org_bom_CP81DW b where a.SAPN=b.Material and left(b.Component,1) in ('1','2') and POVendor='IES'
+*/
+   
+insert #MPinit
+   select distinct a.POVendor,a.IECPN,a.SAPN,b.Component,b.Alternative_item_group,b.Priority,b.Usage_probability,b.Item_number+convert(char(1),@Bi),Quantity from
+   #MPmid a,t_download_org_bom_CP60DW b where a.SAPN=b.Material and left(b.Component,1) in ('1','2') and POVendor='ICC'  and not left(b.Component,3)='146'
+   
+
+delete #MPmid
+    select @Bi=@Bi+1
+end
+
+------(2021/11/10) Remove Dass .
+delete from #MPresult where IECPN like 'PF%' and substring(IECPN,8,2)='BD'  
+-------(2020/03/12) Change Dock Qty allocation method by referring the items with DN only
+/*
+drop table #tmp_OPO_DN0
+drop table #tmp_OPO_DN
+drop table #DN
+*/
+
+select  *,IES_DN='--------------------',IES_DNPGI='0000/00/00'  into #tmp_OPO_DN0 from #tmp_OPO
+
+---Get DN
+select Site,PO,SO,Item,IECPN,PO_Date,Qty856,IES_DN,IES_DNPGI into #DN from Service_APD 
+where Site in (Select distinct ZS92Site from SiteMapping where Customer='HP' and not ZS92Site='') 
+and PndGIDate='0000/00/00' and not IES_DNPGI='0000/00/00' and SO like '11%'
+
+update #tmp_OPO_DN0 set IES_DNPGI=b.IES_DNPGI from #tmp_OPO_DN0 a,
+(
+select a.SO,SOItem=a.Item,Item=convert(int,IPCSOItem),a.IECPN,PO_Date,IES_DNPGI=max(IES_DNPGI) from #DN a,ZM57 b where 
+a.SO=b.IECSO and a.Item=b.IECSPItem --and a.IECPN='JFBL01BMB002' 
+group by a.SO,a.Item,convert(int,IPCSOItem),a.IECPN,a.PO_Date
+) as b where a.SO=b.SO and a.IECPN=b.IECPN and a.POReceiveDate=b.PO_Date and a.POItem=b.Item
+
+update #tmp_OPO_DN0 set IES_DN=b.IES_DN from #tmp_OPO_DN0 a,
+(select distinct a.*,newItem=convert(int,b.IPCSOItem) from #DN a,ZM57 b where a.SO=b.IECSO and a.Item=b.IECSPItem) as b
+where a.SO=b.SO and a.IECPN=b.IECPN and a.POReceiveDate=b.PO_Date and a.IES_DNPGI=b.IES_DNPGI and convert(int,a.POItem)=b.newItem
+
+
+create table #tmp_OPO_DN(pid int identity(1,1),iid int ,Site varchar(20),PO varchar(20),SO varchar(20),Item varchar(20),IECPO varchar(20),POItem varchar(20),
+CPQNo varchar(20),IECPN varchar(20),ProductFamily varchar(20),POVendor varchar(20),
+POReceiveDate char(10),SORequestDate char(10),CustETADate char(10),PO_Type varchar(20),Model_Status varchar(20),FCST_Status varchar(20),PType varchar(20),TCDate char(10),NeedShipDate char(10),
+POQty int,DNQty int,DockQty int,ShipQty int,OpenQty int,Shortage varchar(10),PIC varchar(20),MP varchar(10),Escalation varchar(100),EscalationDate varchar(100),Remark varchar(1000),
+IES_DN varchar(20),IES_DNPGI  varchar(20))
+
+insert #tmp_OPO_DN
+	select *  from #tmp_OPO_DN0 where not DNQty=0 order by IES_DNPGI
+
+--select * from #tmp_OPO_DN
+
+
+declare @DX int
+declare @DY int
+declare @POVendor varchar(20)
+declare @IECPN varchar(20)
+declare @OpenQty int
+declare @DNQty int
+declare @DockQty int
+
+select @DX=min(pid) from #tmp_OPO_DN
+select @DY=max(pid) from #tmp_OPO_DN
+
+while @DX<=@DY
+begin
+    select @POVendor=POVendor,@IECPN=IECPN,@OpenQty=OpenQty,@DNQty=DNQty from #tmp_OPO_DN where pid=@DX
+    if @DNQty>0
+    begin
+		if exists(select * from #INV where POVendor=@POVendor and MatNo=@IECPN and MaterialProperty='SHIP' and Qty>0)
+		begin
+			select @DockQty=Qty from #INV where POVendor=@POVendor and MaterialProperty='SHIP' and MatNo=@IECPN
+			if @DNQty>=@DockQty
+			begin
+			update #tmp_OPO_DN set DockQty=@DockQty where pid=@DX
+			update #INV set Qty=0,Remark=rtrim(Remark)+';('+convert(varchar(5),@DX)+')-->'+convert(varchar(5),@DockQty) where POVendor=@POVendor and MatNo=@IECPN and MaterialProperty='SHIP'
+			end
+			else
+			begin
+			update #tmp_OPO_DN set DockQty=@DNQty where pid=@DX
+			update #INV set Qty=@DockQty-@DNQty,Remark=rtrim(Remark)+';('+convert(varchar(5),@DX)+')-->'+convert(varchar(5),@DNQty) where POVendor=@POVendor and MatNo=@IECPN and MaterialProperty='SHIP'
+			end         
+		end
+    end		
+    select @DX=@DX+1
+end
+
+----If DockQty exist ,then deduct DNQty
+update #tmp_OPO_DN set DNQty=DNQty-DockQty
+
+update #tmp_OPO set DNQty=b.DNQty,DockQty=b.DockQty  from #tmp_OPO a,#tmp_OPO_DN b where a.iid=b.iid
+
+--select * from #tmp_OPO where IECPN='PFFX01AKB002' 
+
+-----Check initial #tmp_OPO ,especially for DockQty
+--select count(*) from #tmp_OPO
+--select * from #tmp_OPO where DockQty>0
+--select * from #INV where not Remark=''
+
+
+
+--select * from #init
+------Get Raw Material & PF Relation from SA shortage report
+create table #init(iid int identity(1,1),POVendor varchar(20),Material varchar(20),WU varchar(8000))
+create table #Mat_PF(POVendor varchar(20),Pno varchar(20),Material varchar(20))
+
+insert #init
+
+select distinct POVendor,procument_part,demand_part from
+(
+---(2018/07/05) Remove unnecessary shortage data
+---(2014/04/16) Change IPC Shortage data to new table .
+/*
+select distinct POVendor='IES',procument_part,demand_part from r_shortage_for_real_demand_v200_others_tracking where len(rtrim(procument_part))=12
+union
+select distinct 'IES',procument_part,demand_part from r_shortage_for_real_demand_v200_keyparts_tracking where len(rtrim(procument_part))=12
+union
+*/
+--select distinct POVendor='IES',procument_part=left(part_no,12),demand_part from r_shortage_data where len(rtrim(part_no))>12
+--union
+--select distinct POVendor='IES',procument_part=left(part_no,12),demand_part from dt_r_shortage_data where len(rtrim(part_no))>12
+--union
+select distinct POVendor='ICC',procument_part=left(part_no,12),demand_part from icc_r_shortage_data where len(rtrim(part_no))>12
+--union
+--select distinct POVendor='ICC',procument_part=left(part_no,12),demand_part from icc_dt_r_shortage_data where len(rtrim(part_no))>12
+/*---(2014/06/17 New ICC data)
+select distinct 'ICC',procument_part,demand_part from icc_r_shortage_for_real_demand_v200_others_tracking where len(rtrim(procument_part))=12
+union
+select distinct 'ICC',procument_part,demand_part from icc_r_shortage_for_real_demand_v200_keyparts_tracking where len(rtrim(procument_part))=12
+*/
+---(2013/11/07 DT FA data)
+--union
+--select distinct 'ICC',part_no,demand_part from ipc_dt_r_shortage_v200_tracking where len(rtrim(part_no))=12
+) as a 
+
+declare @i int
+declare @j int
+select @i=min(iid) from #init
+select @j=max(iid) from #init
+
+while @i<=@j
+begin
+	if (select charindex(';',WU) from #init where iid=@i)>0
+	begin
+		while (select charindex(';',WU) from #init where iid=@i)>0
+		 begin
+			insert #Mat_PF
+				select POVendor,left(WU,charindex(';',WU)-1),Material from #init where iid=@i
+			update #init set WU=substring(WU,charindex(';',WU)+1,1000) where iid=@i
+		 end
+    end
+	else
+	begin
+		insert #Mat_PF
+				select POVendor,WU,Material from #init where iid=@i
+	end	
+     select @i=@i+1 
+end
+
+
+------Get Raw Material & Whereuse Relation from SA shortage report
+
+create table #init2(iid int identity(1,1),POVendor varchar(20),Material varchar(20),Buyer varchar(50),SA varchar(8000))
+create table #Mat_SA(POVendor varchar(20),Pno varchar(20),Material varchar(20),Buyer Varchar(50))
+
+insert #init2
+select distinct POVendor,procument_part,buyer,where_use from
+(
+---(2014/04/16) Change IPC Shortage data to new table .
+/*
+select distinct POVendor='IES',procument_part,buyer,where_use from r_shortage_for_real_demand_v200_others_tracking where len(rtrim(procument_part))=12
+union
+select distinct 'IES',procument_part,buyer,where_use from r_shortage_for_real_demand_v200_keyparts_tracking where len(rtrim(procument_part))=12
+union
+*/
+--select distinct POVendor='IES',procument_part=left(part_no,12),buyer,where_use from r_shortage_data where len(rtrim(part_no))>12
+--union
+--select distinct POVendor='IES',procument_part=left(part_no,12),buyer,where_use from dt_r_shortage_data where len(rtrim(part_no))>12
+--union
+select distinct POVendor='ICC',procument_part=left(part_no,12),buyer,where_use from icc_r_shortage_data where len(rtrim(part_no))>12
+--union
+--select distinct POVendor='ICC',procument_part=left(part_no,12),buyer,where_use from icc_dt_r_shortage_data where len(rtrim(part_no))>12
+/*
+select distinct 'ICC',procument_part,buyer,where_use from icc_r_shortage_for_real_demand_v200_others_tracking where len(rtrim(procument_part))=12
+union
+select distinct 'ICC',procument_part,buyer,where_use from icc_r_shortage_for_real_demand_v200_keyparts_tracking where len(rtrim(procument_part))=12
+*/
+---(2013/11/07 DT FA data)
+--union
+--select distinct 'IES',part_no,buyer,where_use from ipc_dt_r_shortage_v200_tracking where len(rtrim(part_no))=12
+) as a 
+
+update #init2 set Buyer=b.Buyer from #init2 a,BuyerCode b where a.Buyer=b.BuyerCode
+
+declare @a int
+declare @b int
+select @a=min(iid) from #init2
+select @b=max(iid) from #init2
+
+while @a<=@b
+begin
+	if (select charindex(';',SA) from #init2 where iid=@a)>0
+	begin
+		while (select charindex(';',SA) from #init2 where iid=@a)>0
+		begin
+			 insert #Mat_SA
+				select POVendor,left(SA,charindex(';',SA)-1),Material,Buyer from #init2 where iid=@a
+			update #init2 set SA=substring(SA,charindex(';',SA)+1,1000) where iid=@a
+		 end
+	end
+	else
+	begin
+		insert #Mat_SA
+				select POVendor,SA,Material,Buyer from #init2 where iid=@a
+	end	
+     select @a=@a+1 
+end
+
+---Add MP M/B shortage ....
+
+delete #Mat_PF from #Mat_PF a,#MPresult b where a.POVendor=b.POVendor and a.Pno=b.IECPN and a.Material=b.SAPN
+insert #Mat_PF 
+    select distinct POVendor,IECPN,SAPN from #MPresult
+  
+delete #Mat_SA from #Mat_SA a,#MPresult b where a.POVendor=b.POVendor and a.Pno=b.IECPN and a.Material=b.SAPN
+insert #Mat_SA
+    select distinct POVendor,IECPN,SAPN,'' from #MPresult
+
+
+--(2013/03/11) ICC needs to set the same PN for Pno & Material
+--update #Mat_SA set Pno=b.Pno from #Mat_SA a,#Mat_PF b where a.Material=b.Material and a.POVendor=b.POVendor and a.Pno like '151%' and a.Material like '151%' and a.POVendor='ICC'          
+ 
+-----(2013/05/03) Strange K/B Data ...Update first .   
+update #Mat_PF set Material='6037B0049411' where Material='6037B0046211'
+update #Mat_SA set Material='6037B0049411' where Material='6037B0046211'
+
+----(2015/06/25) add the PN which have more than 1 level of 151% 
+----(2017/06/14) Check 151% exclude BD parts 
+select distinct a.POVendor,a.Pno,a.Material,b.Buyer into #tmp_Mat_SA from #Mat_PF a,#Mat_SA b where a.Material=b.Material and a.Material like '15%' 
+and substring(a.Pno,2,1)='F' and not substring(a.Pno,8,2)='BD' and b.Pno like '15%'
+
+--insert #tmp_Mat_SA
+--    select distinct a.POVendor,a.Pno,a.Material,b.Buyer from #Mat_PF a,#Mat_SA b where a.Material=b.Material and a.Material like '6%' and b.Pno like '15%'
+
+----(2015/05/28) Correcnt the KB Duplicate problem    
+delete #Mat_SA from #Mat_SA a,#tmp_Mat_SA b where a.POVendor=b.POVendor /*and a.Pno=b.Pno*/ and a.Material=b.Material and a.Buyer=b.Buyer
+
+insert #Mat_SA
+    select * from #tmp_Mat_SA
+
+-----(2015/10/06) special BOM ...wait for approve ,so force changing first ,otherwise will deadlock
+update #Mat_SA set Material='1640B0035901' where Pno='PFCU31ALM002' and Material='1510B1778201'
+update #Mat_PF set Material='1640B0035901' where Pno='PFCU31ALM002' and Material='1510B1778201'
+
+update #Mat_PF set Material='6071B0017001' where Pno like 'PFEF%LM002' and Material='6071B0012701'
+update #Mat_SA set Material='6071B0017001' where Material='6071B0012701' and Pno in ('1510B2563002','1510B2563003','1510B2628801','1510B2628802')
+
+/*
+delete from #Mat_PF where Material='6070B1975004'
+delete from #Mat_SA where Material='6070B1975004'
+*/
+
+--(2023/11/24) wrong where use in FA data
+--delete from #Mat_SA where Material='6070B2278201' --and Pno='1510B3822801'
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+-------(Modify on 2012/12/27) Find Top 13%
+create table #init131(POVendor varchar(20),Material varchar(20),mid varchar(20),nextlevel varchar(20))
+create table #mid131(POVendor varchar(20),Material varchar(20),mid varchar(20),nextlevel varchar(20))
+create table #final131(POVendor varchar(20),Material varchar(20),mid varchar(20),nextlevel varchar(20))
+create table #finalPF(POVendor varchar(20),Material varchar(20),mid varchar(20),nextlevel varchar(20))
+
+insert #init131
+   select distinct POVendor,Pno,Pno,Pno from #Mat_SA where left(Pno,2) in ('11','13','19')
+
+declare @count int
+select @count=0
+
+while (select count(*) from #init131)>0
+begin
+if @count>10
+begin
+    select 'Too Many loops'
+    return
+end
+/*
+insert #mid131
+select a.POVendor,a.Material,a.mid,b.Material from #init131 a,t_download_org_bom_CP81DW b where a.mid=b.Component and a.POVendor='IES'
+*/
+insert #mid131
+select a.POVendor,a.Material,a.mid,b.Material from #init131 a,t_download_org_bom_CP60DW b where a.mid=b.Component and a.POVendor='ICC' and not left(b.Component,3)='146'
+
+insert #final131 
+select distinct * from #mid131 where not nextlevel like '13%'
+
+delete from #mid131 where not nextlevel like '13%'
+
+delete from #init131
+insert #init131
+    select POVendor,Material,nextlevel,nextlevel from #mid131    
+
+delete from #mid131
+select @count=@count+1
+end
+
+--select * from #final131
+
+-----(2021/11/10 delete Daas)
+insert #finalPF
+   select * from #final131 where left(nextlevel,2) in ('PF','PO','SF','JF') and not (nextlevel like 'PF%' and substring(nextlevel,8,2)='BD') 
+   
+delete from #final131 where left(nextlevel,2) in ('PF','PO','SF','JF')
+
+delete from #init131
+delete from #mid131
+
+-----Find PF
+
+insert #init131
+ select distinct POVendor,nextlevel,nextlevel,nextlevel from #final131
+
+--declare @count int
+select @count=0
+
+while (select count(*) from #init131)>0
+begin
+if @count>10
+begin
+    select 'Too Many loops'
+    return
+end
+/*
+insert #mid131
+select a.POVendor,a.Material,a.mid,b.Material from #init131 a,t_download_org_bom_CP81DW b where a.mid=b.Component and a.POVendor='IES'
+*/
+insert #mid131
+select a.POVendor,a.Material,a.mid,b.Material from #init131 a,t_download_org_bom_CP60DW b where a.mid=b.Component and a.POVendor='ICC' and not left(b.Component,3)='146'
+
+
+
+insert #finalPF 
+select distinct * from #mid131 where left(nextlevel,2) in ('PF','PO','SF','JF') and not  (nextlevel like 'PF%' and substring(nextlevel,8,2)='BD' )
+
+delete from #mid131 where left(nextlevel,2) in ('PF','PO','SF','JF')
+
+delete from #init131
+insert #init131
+    select POVendor,Material,nextlevel,nextlevel from #mid131    
+
+delete from #mid131
+select @count=@count+1
+end
+
+--select * from #finalPF where nextlevel like 'PF%' and substring(nextlevel,8,2)='BD'  
+
+select distinct POVendor,PFnextlevel,PFmid,mid into #tmp2 from (
+select * from
+(
+------
+select distinct * from
+(
+select distinct Material,mid,PFmid,PFnextlevel from
+(
+select * from
+(select * from #final131) as a left join
+(select PFMaterial=Material,PFmid=mid,PFnextlevel=nextlevel from #finalPF) as b on a.nextlevel=b.PFMaterial
+) as a where not PFMaterial is null
+union
+---(2013/01/04)Up level should be PF
+select distinct Material,mid,nextlevel,nextlevel from #finalPF where left(nextlevel,2) in ('PF','PO','SF','JF') and (Material like '13%' or Material like '11%')
+) as a 
+-------
+) as a left join
+(select distinct POVendor,PFPno=IECPN from #tmp_OPO
+) as b on a.PFnextlevel=b.PFPno 
+) as a where not PFPno is null  
+
+--select distinct * from #tmp2
+update #tmp2 set mid=PFmid where mid like '192%'
+
+create table #result (POVendor varchar(20),PF varchar(20),RefPN varchar(20),ShortagePN varchar(20))
+
+insert #result
+    select distinct * from #tmp2
+
+----(2013/02/04) Remove the 13% which RefPN exists PF & 13% both
+delete from #result where ShortagePN in (
+select distinct ShortagePN from #result where ShortagePN in (
+select distinct ShortagePN from #result where RefPN=ShortagePN and ShortagePN like '13%') and left(RefPN,2) in ('PF','PO','SF','JF')) and RefPN=ShortagePN
+
+
+----Insert the Material which parent is PF
+insert #result
+     select distinct POVendor,Pno,Pno,Material from #Mat_SA where (Material like '6%' or Material like '1%') and left(Pno,2) in ('PF','PO','SF','JF')
+
+--select * from #result where  PF like 'PF%' and substring(PF,8,2)='BD' 
+
+
+----Find the PF for 1xx 
+create table #initAssy(POVendor varchar(20),Assy varchar(20),PF varchar(20))
+create table #midAssy(POVendor varchar(20),Assy varchar(20),PF varchar(20))
+create table #finalAssy(POVendor varchar(20),Assy varchar(20),PF varchar(20))
+
+--declare @count int
+select @count=0
+
+insert #initAssy
+ select distinct POVendor,Pno,Pno from #Mat_SA where Material like '6%' and left (Pno,1)='1' and not left(Pno,2) in ('11','13','19','PF','PO','SF','JF') 
+
+while (select count(*) from #initAssy)>0
+begin
+if @count>10
+begin
+    select 'Too Many loops'
+    return
+end
+/*
+insert #midAssy
+select POVendor,a.Assy,b.Material from #initAssy a,t_download_org_bom_CP81DW b where a.PF=b.Component and not b.Material like 'PC%' and POVendor='IES'
+*/
+insert #midAssy
+select POVendor,a.Assy,b.Material from #initAssy a,t_download_org_bom_CP60DW b where a.PF=b.Component and not b.Material like 'PC%' and POVendor='ICC' and not left(b.Component,3)='146'
+
+insert #finalAssy 
+select distinct * from #midAssy where left(PF,2) in ('PF','PO','SF','JF')
+
+--delete from #midAssy from #midAssy a,#finalAssy b where a.Assy=b.Assy
+delete from #midAssy where left(PF,2) in ('PF','PO','SF','JF')
+
+delete from #initAssy
+insert #initAssy
+    select * from #midAssy    
+
+delete from #midAssy
+select @count=@count+1
+end
+delete from  #midAssy   
+insert #midAssy    
+    select distinct * from #finalAssy
+    
+delete from #initAssy 
+insert #initAssy  
+     select * from #midAssy   
+
+--select * from #initAssy 
+
+select POVendor,Assy,PF into #tmp3 from (
+select * from
+(select * from #finalAssy) as a left join
+(select distinct PV=POVendor,PFPno=IECPN from #tmp_OPO
+--select distinct PV=POVendor,PFPno=Pno from #Mat_PF
+) as b on a.PF=b.PFPno and a.POVendor=b.PV
+) as a where not PFPno is null      
+ 
+delete from #finalAssy
+insert #finalAssy
+    select * from #tmp3  
+ 
+insert #result
+select distinct a.POVendor,a.PF,b.Pno,b.Material from #finalAssy a,
+(select distinct * from #Mat_SA where Material like '6%' and left (Pno,1)='1' and not left(Pno,2) in ('11','13','19','PF','PO','SF','JF')) as b
+where a.POVendor=b.POVendor and a.Assy=b.Pno
+
+---(2013/06/18)----Get Substitution (even 0%)
+/*
+select distinct a.POVendor,PF,RefPN,b.Component into #GetSub from #result a,
+(
+select distinct a.Material,a.Component from t_download_org_bom_CP81DW a,(
+select b.Material,b.Alternative_item_group,b.Item_number from #result a,t_download_org_bom_CP81DW b where a.RefPN=b.Material and a.ShortagePN=b.Component and POVendor='IES') as b 
+where a.Material=b.Material and a.Alternative_item_group=b.Alternative_item_group and a.Item_number=b.Item_number
+) as b where a.RefPN=b.Material
+*/
+
+
+select distinct a.POVendor,PF,RefPN,b.Component into #GetSub from #result a,
+(
+select distinct a.Material,a.Component from t_download_org_bom_CP60DW a,(
+select b.Material,b.Alternative_item_group,b.Item_number from #result a,t_download_org_bom_CP60DW b where a.RefPN=b.Material and a.ShortagePN=b.Component and POVendor='ICC') as b 
+where a.Material=b.Material and a.Alternative_item_group=b.Alternative_item_group and a.Item_number=b.Item_number
+) as b where a.RefPN=b.Material
+
+
+
+delete from #result from #result a,#GetSub b where a.POVendor=b.POVendor and a.PF=b.PF and a.RefPN=b.RefPN and a.ShortagePN=b.Component
+
+insert #result
+    select * from #GetSub
+
+-----------Strange Data ,manual modify    
+--select * from #result where RefPN='1510B1248105' and ShortagePN='6037B0065512'
+--update #result set ShortagePN='6037B0080212' where RefPN='1510B1379429' and ShortagePN='6037B0081012'
+--update #result set ShortagePN='6037B0065612' where RefPN='1510B1248105' and ShortagePN='6037B0065512'
+
+--(2013/01/04) -----Add Agency Label back .
+--Remove Carton
+/*
+delete from #result where ShortagePN like '606%' and not ShortagePN in (select distinct Material from t_download_matmas_CP81DW where Material_descript like 'LABEL,AGENCY%')
+*/
+delete from #result where ShortagePN like '606%' and not ShortagePN in (select distinct Material from t_download_matmas_CP60DW where Material_descript like 'LABEL,AGENCY%')
+------(2017/06/30) Remove the materail which Qty<1 
+delete from #result where (ShortagePN like '6154A0000301%' or ShortagePN like '6017B0763602%')
+
+---(2017/05/17) Remove 6160 label 
+delete from #result where ShortagePN like '6160%'
+
+--select * from #result where PF='PFBE01DTP002'
+--select * from #AAResult where PF='PFDG01DKB052'
+--select * from #result where ShortagePN='1510B1261101'
+
+-------(2015/07/01) ----Test ,check dead look for this Query
+--delete from #result where PF='PFDG01ACK002'
+
+-----(2021/07/23)Remove 15 if PF is MB
+--select * from #result where substring(PF,8,2)='MB' and ShortagePN like '15%'
+delete from #result where (substring(PF,8,2)='MB' or PF='JFGK01AST002') and ShortagePN like '15%'
+
+/*
+drop table #AA
+drop table #AAbom
+drop table #tmp_AAbom
+drop table #AAResult
+drop table #FindQty
+drop table #midFindQty
+drop table #Alternative
+
+*/
+--------------Get Alternative-----(2012/11/09)There are some item which usage Qty is less than 1 ...
+create table #AA(POVendor varchar(20),PF varchar(20),RefPN varchar(20),ShortagePN varchar(20))
+create table #AAbom(POVendor varchar(20),PF varchar(20),Material varchar(20),Component varchar(20),AG varchar(20),Priority varchar(20),Usage varchar(20),Item varchar(20),Qty float)
+create table #tmp_AAbom(POVendor varchar(20),PF varchar(20),Material varchar(20),Component varchar(20),AG varchar(20),Priority varchar(20),Usage varchar(20),Item varchar(20),Qty float)
+--create table #AAmid(POVendor varchar(20),PF varchar(20),Component varchar(20),RefPN varchar(20),ShortagePN varchar(20),AG varchar(20),Priority varchar(20),Usage varchar(20),Item varchar(20),Qty float)
+create table #AAResult(POVendor varchar(20),PF varchar(20),RefPN varchar(20),ShortagePN varchar(20),AG varchar(20),Priority varchar(20),Usage varchar(20),Item varchar(20),Qty float)
+
+----(2023/11/16) get no duplicate first
+---Get Component
+insert #AA   
+      select distinct a.POVendor,a.PF,a.RefPN,a.ShortagePN from #result a,
+   (
+   select POVendor,PF,ShortagePN from 
+   (
+   select POVendor,PF,ShortagePN,qty=count(*)  from #result group by POVendor,PF,ShortagePN) as a where qty=1
+   ) as b where a.POVendor=b.POVendor and a.PF=b.PF and a.ShortagePN=b.ShortagePN
+
+
+
+---Get Component
+insert #AA
+   select distinct a.POVendor,a.PF,'-',a.ShortagePN from #result a,
+   (
+   select POVendor,PF,ShortagePN from 
+   (
+   select POVendor,PF,ShortagePN,qty=count(*)  from #result group by POVendor,PF,ShortagePN) as a where qty>1
+   ) as b where a.POVendor=b.POVendor and a.PF=b.PF and a.ShortagePN=b.ShortagePN
+
+/*
+   select distinct POVendor,PF,RefPN,ShortagePN from #result where PF like 'PFGQ01BMB232%'
+   select distinct POVendor,PF,RefPN,ShortagePN from #AA where PF like 'PFGQ01BMB232%'
+
+   select distinct POVendor,PF,RefPN,ShortagePN from #result where PF like 'PFGQ01BMB232%'
+   select distinct POVendor,PF,RefPN,ShortagePN from #AA where PF like 'PFGQ01BMB232%'
+   select * from #result where RefPN='-'
+*/
+
+----(2023/11/16) Add back RefPN by use different way to prevent duplicate
+update #AA set RefPN=b.RefPN from #AA a,#result b where a.POVendor=b.POVendor and a.PF=b.PF and a.ShortagePN=b.ShortagePN and a.RefPN='-' and substring(b.RefPN,2,1)='F'
+
+---Top down BOM
+/*
+insert #AAbom
+select b.POVendor,a.Material,a.Material,a.Component,a.Alternative_item_group,a.Priority,a.Usage_probability,a.Item_number,
+Qty=/*convert(int,*/convert(float,replace(replace(a.Quantity,' ',''),',',''))/*)*/ from t_download_org_bom_CP81DW a,#AA b where a.Material=b.PF and POVendor='IES'
+*/
+insert #AAbom
+select b.POVendor,a.Material,a.Material,a.Component,a.Alternative_item_group,a.Priority,a.Usage_probability,convert(varchar(20),a.Bom)+'_'+a.Item_number,
+Qty=/*convert(int,*/convert(float,replace(replace(a.Quantity,' ',''),',',''))/*)*/ from t_download_org_bom_CP60DW a,#AA b where a.Material=b.PF and POVendor='ICC' 
+--and not left(a.Component,3)='146'
+
+
+
+declare @checkCycle int
+select @checkCycle=0
+----Cycle
+while (select count(*) from #AA)>0
+begin
+insert #AAResult
+select distinct a.POVendor,a.PF,a.RefPN,a.ShortagePN,AG,Priority,Usage,Item,Qty from #AA a,#AAbom b where a.PF=b.PF and a.ShortagePN=b.Component
+
+delete from #AA from #AA a,#AAResult b where a.POVendor=b.POVendor and a.PF=b.PF and a.ShortagePN=b.ShortagePN
+
+
+----Remove the data which existed in #AAResult
+--delete from #AAbom from #AAResult a,#AAbom b where a.PF=b.PF and a.ShortagePN=b.Component
+
+---Remove BOM which component is raw material 
+delete from #AAbom where Component like '6%'
+--delete from #AAbom where not PF in (select distinct PF from #AA)
+
+
+---Get next stage BOM
+/*
+insert #tmp_AAbom
+select distinct b.POVendor,b.PF,a.Material,a.Component,a.Alternative_item_group,a.Priority,a.Usage_probability,a.Item_number+convert(char(2),@checkCycle),
+Qty=/*convert(int,*/convert(float,replace(replace(a.Quantity,' ',''),',',''))/*)*/ from t_download_org_bom_CP81DW a,#AAbom b where a.Material=b.Component and b.POVendor='IES'
+*/
+insert #tmp_AAbom
+select distinct b.POVendor,b.PF,a.Material,a.Component,a.Alternative_item_group,a.Priority,a.Usage_probability,convert(varchar(20),a.Bom)+'_'+a.Item_number+convert(char(2),@checkCycle),
+Qty=/*convert(int,*/convert(float,replace(replace(a.Quantity,' ',''),',',''))/*)*/ from t_download_org_bom_CP60DW a,#AAbom b where a.Material=b.Component and b.POVendor='ICC'
+--and not left(a.Component,3)='146'
+
+
+delete from #AAbom
+
+insert #AAbom
+  select * from #tmp_AAbom
+  
+select @checkCycle=@checkCycle+1
+if @checkCycle>30
+begin
+     select 'too many loop~~'
+     return
+end
+end
+
+---(2013/01/28) Insert Raw Material to #AAResult
+insert #AAResult
+    select distinct POVendor,IECPN,'0',IECPN,'NA','','','','1' from #tmp_OPO where IECPN like '6%'
+
+
+--(2121/11/10) Remove Dass
+delete from #AAResult where  PF like 'PF%' and substring(PF,8,2)='BD' 
+
+
+----Find the Qty
+create table #FindQty(POVendor varchar(20),PF varchar(20),SA varchar(20),RefPN varchar(20),ShortagePN varchar(20),Qty float)
+create table #midFindQty(POVendor varchar(20),PF varchar(20),SA varchar(20),RefPN varchar(20),ShortagePN varchar(20),Qty float)
+insert #FindQty
+   select distinct POVendor,PF,PF,RefPN,ShortagePN,0 from #AAResult where Qty=0
+   
+
+while (select count(*) from #FindQty)>0
+begin   
+/*
+update #FindQty set Qty=convert(int,convert(float,replace(replace(b.Quantity,' ',''),',',''))) from #FindQty a,t_download_org_bom_CP81DW b where a.SA=b.Material and a.ShortagePN=b.Component
+and a.Qty=0 and a.POVendor='IES'
+*/
+
+update #FindQty set Qty=convert(int,convert(float,replace(replace(b.Quantity,' ',''),',',''))) from #FindQty a,t_download_org_bom_CP60DW b where a.SA=b.Material and a.ShortagePN=b.Component
+and a.Qty=0 and a.POVendor='ICC' 
+
+--Update found Qty to #AAResult
+update #AAResult set Qty=b.Qty from #AAResult a,(select distinct PF,RefPN,ShortagePN,Qty from #FindQty where Qty>0) as b where a.PF=b.PF 
+and a.RefPN=b.RefPN and a.ShortagePN=b.ShortagePN and a.Qty=0
+
+--Delete the Qty>0
+delete from #FindQty where Qty>0
+
+--Delete the extra data
+delete from #FindQty from #FindQty a,#AAResult b where a.PF=b.PF and a.RefPN=b.RefPN and a.ShortagePN=b.ShortagePN and b.Qty>0
+
+/*
+insert #midFindQty
+     select a.PF,b.Component,a.RefPN,a.ShortagePN,0 from #FindQty a,t_download_org_bom_CP81DW b where a.SA=b.Material and not Component like '6%' and a.POVendor='IES'
+*/     
+insert #midFindQty
+     select a.PF,b.Component,a.RefPN,a.ShortagePN,0 from #FindQty a,t_download_org_bom_CP60DW b where a.SA=b.Material and not Component like '6%' and a.POVendor='ICC'
+     --and not left(a.Component,3)='146'
+        
+
+delete from #FindQty
+
+insert #FindQty 
+     select * from #midFindQty
+
+
+delete from #midFindQty
+end
+
+
+
+-----------------------------------------------------------------------------------------------
+/*
+select * from #tmp_OPO where IECPN='6054B1138701'
+update #tmp_OPO set Shortage='Y' from #tmp_OPO a,#result b where a.POVendor=b.POVendor and a.IECPN=b.PF
+update #tmp_OPO set Shortage='N' where Shortage=''
+*/
+
+update #AAResult set AG='NA' where AG is null
+update #AAResult set AG='Y' where not AG='NA'
+
+update #AAResult set Usage=replace(Usage,' ','')
+
+---(2013/06/18)-----Get Alternative
+--drop table #Alternative
+create table #Alternative(POVendor varchar(20),PF varchar(20),MS varchar(20),RefPN varchar(20),ShortagePN varchar(20),
+AG varchar(20),Priority varchar(20),Usage varchar(20),Item varchar(20),Qty float,INV int)
+
+--drop table #tmpAlt
+create table #tmpAlt(iid int identity(1,1),POVendor varchar(20),PF varchar(20),RefPN varchar(20),Item varchar(20))
+
+--drop table #tmpAltResult
+create table #tmpAltResult(POVendor varchar(20),PF varchar(20),RefPN varchar(20),MS varchar(20),Item varchar(20))
+
+insert #tmpAlt
+     select POVendor,PF,RefPN,Item from(
+        select POVendor,PF,RefPN,Item,qty=count(*) from #AAResult where AG='Y'  group by POVendor,PF,RefPN,Item) as a where qty>1
+        
+  
+declare @Ai int
+declare @Aj int
+declare @APOVendor varchar(20)
+declare @APF varchar(20)
+declare @ARefPN varchar(20)
+declare @AItem varchar(20)
+select @Ai=min(iid) from #tmpAlt
+select @Aj=max(iid) from #tmpAlt
+
+
+while @Ai<=@Aj
+begin
+    select @APOVendor=POVendor,@APF=PF,@ARefPN=RefPN,@AItem=Item from #tmpAlt where iid=@Ai
+----(2019/07/16) Adjust query order to sync with OSD MB check..           
+    insert #tmpAltResult
+         select top 1 POVendor,PF,RefPN,ShortagePN+'*',Item from #AAResult where 
+              POVendor=@APOVendor and PF=@APF and RefPN=@ARefPN and Item=@AItem order by Usage desc/*,Priority*/,ShortagePN --order by Usage desc,ShortagePN desc
+    
+    select @Ai=@Ai+1
+end
+
+
+insert #Alternative
+     select distinct a.POVendor,a.PF,b.MS,a.RefPN,a.ShortagePN,a.AG,a.Priority,a.Usage,a.Item,a.Qty,0 from #AAResult a,#tmpAltResult b where 
+              a.POVendor=b.POVendor and a.PF=b.PF and a.RefPN=b.RefPN and a.Item=b.Item
+
+-----(2015/06/25) add AG-'Y' but only one item in #AAResult
+delete from #AAResult from #AAResult a,(select POVendor,PF,RefPN,Item from(
+        select POVendor,PF,RefPN,Item,qty=count(*) from #AAResult where AG='Y'  group by POVendor,PF,RefPN,Item) as a where qty>1) as b where
+        a.POVendor=b.POVendor and a.PF=b.PF and a.RefPN=b.RefPN and a.Item=b.Item
+
+
+insert #AAResult
+   select distinct POVendor,PF,RefPN,MS,'','','','',Qty from #Alternative
+
+
+--(2013/01/18 --> Strange ,remark first ,forget why add this )
+
+--drop table #tmpSeq
+create table #tmpSeq(iid int identity(1,1),POVendor varchar(20),PF varchar(20),RefPN varchar(20))
+
+insert #tmpSeq
+select distinct a.POVendor,a.PF,a.RefPN from #AAResult a,(
+select distinct PF from
+(select PF,ShortagePN,qty=count(*) from #AAResult group by PF,ShortagePN) as a where qty>1 ) as b where a.PF=b.PF order by a.PF,RefPN
+
+update #AAResult set RefPN=convert(varchar(10),b.iid) from #AAResult a,#tmpSeq b where a.POVendor=b.POVendor and a.PF=b.PF and a.RefPN=b.RefPN
+update #AAResult set RefPN='0' where len(RefPN)='12' 
+
+update #AAResult set Qty='1' where ShortagePN='6071B0011002' and Qty=0
+/*
+delete #INV where MaterialProperty='FG'
+insert #INV
+  select POVendor,MP,MatNo,Qty,INVDate,'' from Ivan_CurrentINV  where INVDate>=convert(char(10),getdate(),111) and MP='FG'
+drop table #tmpWH
+drop table #midWH
+drop table #altWH
+drop table #WHResult
+*/
+---Debug
+--update #INV set Qty='481' where MatNo='6054B0196601'
+--insert #INV values('IES','FG','6054B0196601','1000','2013/01/31','')
+
+-----(2014/11/28) remove 6071 material
+delete from #AAResult where ShortagePN like '6071%'
+
+-----(2016/11/28) remove DPK BOM
+delete from #AAResult where ShortagePN like '12%'
+
+-----(2018/07/16) Already has alternative also need to add 01/02 for Thermal Module
+update #Alternative set Usage='20' where MS like '6043%*'
+--select * from #Alternative where MS like '6043%*' order by PF,MS,ShortagePN
+
+insert #Alternative
+select POVendor,PF,MS,RefPN,left(ShortagePN,11)+'1',AG,rtrim(Priority)+'1','15',Item,Qty,INV from #Alternative where MS like '6043%*' and ShortagePN like '6043%03'
+insert #Alternative
+select POVendor,PF,MS,RefPN,left(ShortagePN,11)+'2',AG,rtrim(Priority)+'2','15',Item,Qty,INV from #Alternative where MS like '6043%*' and ShortagePN like '6043%03'
+insert #Alternative
+select POVendor,PF,MS,RefPN,left(ShortagePN,11)+'1',AG,rtrim(Priority)+'1','15',Item,Qty,INV from #Alternative where MS like '6043%*' and ShortagePN like '6043%13'
+insert #Alternative
+select POVendor,PF,MS,RefPN,left(ShortagePN,11)+'2',AG,rtrim(Priority)+'2','15',Item,Qty,INV from #Alternative where MS like '6043%*' and ShortagePN like '6043%13'
+
+
+----(2015/04/30) Manual Get Substitution for Thermal Module
+--------------------------------------------------------
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=ShortagePN,'Y','01','60','0010',Qty='1',INV='0' from #AAResult where ShortagePN like '6043%3' and not ShortagePN='6043B0138603'
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=left(ShortagePN,11)+'1','Y','01','20','0020',Qty='1',INV='0' from #AAResult where ShortagePN like '6043%3' and not ShortagePN='6043B0138603'
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=left(ShortagePN,11)+'2','Y','01','20','0030',Qty='1',INV='0' from #AAResult where ShortagePN like '6043%3' and not ShortagePN='6043B0138603'
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=ShortagePN,'Y','01','60','0010',Qty='1',INV='0' from #AAResult where ShortagePN like '6043%6'
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=left(ShortagePN,11)+'4','Y','01','20','0020',Qty='1',INV='0' from #AAResult where ShortagePN like '6043%6'
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=left(ShortagePN,11)+'5','Y','01','20','0030',Qty='1',INV='0' from #AAResult where ShortagePN like '6043%6'
+
+
+-----(2018/08/03) Special PN
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=ShortagePN,'Y','01','40','0010',Qty='1',INV='0' from #AAResult where ShortagePN='6043B0138603'
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=left(ShortagePN,11)+'1','Y','01','20','0020',Qty='1',INV='0' from #AAResult where ShortagePN='6043B0138603'
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=left(ShortagePN,11)+'2','Y','01','20','0030',Qty='1',INV='0' from #AAResult where ShortagePN='6043B0138603'
+insert #Alternative
+select POVendor,PF,MS=left(ShortagePN,12)+'*',RefPN=PF,ShortagePN=left(ShortagePN,11)+'4','Y','01','20','0040',Qty='1',INV='0' from #AAResult where ShortagePN='6043B0138603'
+
+update #AAResult set ShortagePN=left(ShortagePN,12)+'*' where (ShortagePN like '6043%3' or ShortagePN like '6043%6')
+--select * from #AAResult where ShortagePN like '6043%'
+--select * from #Alternative where ShortagePN like '6043%' order by PF,ShortagePN
+--------------------------------------------------------
+--------------------------------------------------------
+
+---(2015/08/03 remove duplicate in #AAResult)
+
+select POVendor,PF,RefPN,ShortagePN,AG,Priority,Usage,Item,Qty into #tmp_AAResult from (
+select POVendor,PF,RefPN='0',ShortagePN,AG,Priority,Usage,Item,Qty,qty=count(*) from #AAResult group by POVendor,PF,ShortagePN,AG,Priority,Usage,Item,Qty) as a where qty>1
+--------------------------------------------------------
+--------------------------------------------------------
+
+delete from  #AAResult from #AAResult a,#tmp_AAResult b where a.POVendor=b.POVendor and a.PF=b.PF and a.ShortagePN=b.ShortagePN and a.AG=b.AG 
+and a.Priority=b.Priority and a.Usage=b.Usage and a.Item=b.Item and a.Qty=b.Qty
+
+insert #AAResult
+   select * from #tmp_AAResult
+
+--select * from #AAResult where PF=''JF1932ALM002'
+--select * from #AAResult where PF='PFAS01ACK002'
+
+---------------------------------------------------------
+--------(2016/11/09)Try To Solve Hinge /Antenna issue.....
+--------(2017/09/20) solve the missing data which has substitution but no shortage
+----------------------------------------------------------
+--drop table #Hinge
+--select a.*,iid,b.MainCom,b.DT into #Hinge from #AAResult a,HingeAntenna b where a.PF=b.PF and a.ShortagePN=b.Component
+
+select distinct POVendor,a.PF,RefPN,Component,AG,Priority,Usage,Item,Qty,iid,a.MainCom,a.DT into #Hinge from HingeAntenna a,
+(select distinct a.POVendor,a.RefPN,AG,Priority,Usage,Item,Qty,b.PF,b.MainCom from #AAResult a,HingeAntenna b where a.PF=b.PF and a.ShortagePN=b.Component /*and a.PF= 'JF1932ALM002'*/)  as b
+where a.PF=b.PF and a.MainCom=b.MainCom
+
+insert #Alternative
+select distinct a.POVendor,a.PF,b.MainCom,a.PF,b.Component,'Y',b.iid,'','','1','0' from #AAResult a,#Hinge b 
+where a.PF=b.PF --and a.ShortagePN=b.Component
+
+-----Delete 
+delete from #AAResult from #AAResult a,#Hinge b where a.PF=b.PF and a.ShortagePN=b.Component
+
+----insert MainCom
+insert #AAResult
+select distinct POVendor,PF,0,MainCom,'','','','',1 from #Hinge
+
+--select * from #AAResult where PF='PFBP01BLM002'
+
+-----(2019/06/12) Add it back ...Still checking..Don't know what's going on ....
+-----(2019/04/19) Remove strange Alternative
+---delete from #Alternative where PF='PFDC01AKB292' and MS='6037B0113199*'
+
+----------------------------------------------------------
+----------------------------------------------------------
+---------------------------------------------------------
+
+---(2020/12/14) Strange Date ,Remove first
+--select *  from #AAResult where PF='PFGQ01KMB232'  and RefPN like '151%' and ShortagePN='1310A3009701'
+delete from #AAResult where PF like 'PFEF%LM002'  and ShortagePN='1310A3009701'
+
+
+----(2023/03/24) for 151%* 硬改
+--delete from #AAResult where ShortagePN like '151%*'
+--delete from #Alternative where MS like '151%*'
+------Get Original Shortage is 6070 but MS is 151%*
+select distinct PF,MS,Material into #Set from 
+(select * from #Alternative) as a inner join
+(select * from #Mat_PF where Material like '6070%') as b on a.ShortagePN=b.Material and MS like '151%*'
+
+---Update 151%* to 6070*
+update #AAResult set ShortagePN=left(b.Material,12)+'*' from #AAResult a,#Set b where a.PF=b.PF and a.ShortagePN=b.MS
+--select * from #AAResult a,#Set b where a.PF=b.PF and a.ShortagePN=b.MS
+update #Alternative set MS=left(b.Material,12)+'*' from #Alternative a,#Set b where a.PF=b.PF and a.MS=b.MS
+--select * from #Alternative a,#Set b where a.PF=b.PF and a.MS=b.MS
+
+delete from #AAResult where ShortagePN like '151%*'
+delete from #Alternative where MS like '151%*'
+
+-----2026/02/26 Force to remove MB 151
+delete from #AAResult where substring(PF,8,2)='MB' and ShortagePN like '15%'
+
+
+
+----------------------------------------------------------
+----------------------------------------------------------
+---------------------------------------------------------
+/*
+delete #INV where MaterialProperty='FG'
+insert #INV
+  select POVendor,MP,MatNo,Qty,INVDate,'' from Ivan_CurrentINV  where INVDate>=convert(char(10),getdate(),111) and MP='FG'
+drop table #tmpWH
+drop table #midWH
+drop table #rltWH
+drop table #altWH
+drop table #WHResult
+*/
+
+create table #tmpWH(iid int identity(1,1),OpenQty int,RefPN int,ShortagePN varchar(20),Qty float,INV float)
+create table #midWH(iid int identity(1,1),OpenQty float,ShortagePN varchar(20),Qty float,INV float,fillQty float,NeedQty float)
+create table #rltWH(iid int identity(1,1),OpenQty float,ShortagePN varchar(20),Qty float,INV float,fillQty float,NeedQty float)
+create table #altWH(iid int identity(1,1),NeedQty float,ShortagePN varchar(20))
+create table #WHResult(Wid int identity(1,1),iid int,PN varchar(20),SubPN varchar(20),Usage float,Qty float,INVDate char(10))
+
+declare @WX int
+declare @WY int
+declare @iX int
+declare @iY int
+declare @usage float
+declare @mwX int
+declare @mwY int
+declare @WPOVendor varchar(20)
+declare @WIECPN varchar(20)
+declare @WOpenQty float
+
+declare @minQty float 
+declare @mX int
+declare @mY int                         
+declare @mQty float                      
+declare @mat varchar(20)
+
+declare @altX int
+declare @altY int
+declare @altQty float
+declare @altINV int
+declare @mainPN varchar(20)
+declare @DetailQty float
+declare @INVDate char(10)
+declare @altMatNo varchar(20)
+
+select @WX=min(iid) from #tmp_OPO
+select @WY=max(iid) from #tmp_OPO
+
+--select @WX=70
+--select @WY=77
+
+while @WX<=@WY  ----1st loop begin
+begin --111
+----Find OPO item (2012/12/21 --> needs to remove PType='ZN')
+       ----(2013/01/18 add ,find PF to deduct )
+       ----(2015/01/29 add ,Don't need to check if no shortage)
+       ----(2015/02/11 clear the variant)
+       select @WPOVendor='',@WIECPN='',@WOpenQty=0       
+       select @WPOVendor=isnull(a.POVendor,''),@WIECPN=isnull(IECPN,''),@WOpenQty=isnull(OpenQty,0)-isnull(DockQty,0) from #tmp_OPO a, #AAResult b
+       where a.IECPN=b.PF and a.POVendor=b.POVendor and iid=@WX and PType='NB'
+       --select @WPOVendor=isnull(POVendor,''),@WIECPN=isnull(IECPN,''),@WOpenQty=isnull(OpenQty,0)-isnull(DockQty,0) from #tmp_OPO where iid=@WX and PType='NB'
+--select @WPOVendor,@WIECPN,@WOpenQty
+---Only OpenQty>0 need to check detail ,else ,go next .
+if (@WOpenQty>0 /*and left(@WIECPN,2) in ('PF','PO','SF','JF')*/)
+begin --1121          
+---------------------------------------------------------------------------------------------------------------------------------------------
+-----(2014/02/13)deduct PF & 60 first in Inventory exists
+---------------------------------------------------------------------------------------------------------------------------------------------
+	 if exists(select * from #INV where POVendor=@WPOVendor and MatNo=@WIECPN and MaterialProperty='FG' /*and left(MatNo,2) in ('PF','PO','SF','JF')*/ and Qty>0)
+	 begin --10
+	 --while @WOpenQty>0
+	 --		begin --12			    
+				select top 1 @DetailQty=Qty,@INVDate=INVDate from #INV where POVendor=@WPOVendor and MatNo=@WIECPN and MaterialProperty='FG' /*and left(MatNo,2) in ('PF','PO','SF','JF')*/ and Qty>0 order by INVDate
+				--select @DetailQty,@INVDate,@WOpenQty
+				if @WOpenQty>=@DetailQty
+				begin --13
+					 ----INV 變 0
+					update #INV set Qty=0,Remark=rtrim(Remark)+';('+convert(varchar(10),@WX)+')-->'+convert(varchar(10),@DetailQty)
+					 where MatNo=@WIECPN and INVDate=@INVDate and MaterialProperty='FG' and POVendor=@WPOVendor
+					/*'+convert(varchar(10),@WX)+'*/
+					insert #WHResult values(@WX,@WIECPN,@WIECPN,1,@DetailQty,@INVDate)
+					select @WOpenQty=@WOpenQty-@DetailQty					
+				 end  --13
+				 else
+				 begin  --14
+					  ---INV 減少
+					update #INV set Qty=@DetailQty-@WOpenQty,Remark=rtrim(Remark)+';('+convert(varchar(10),@WX)+')-->'+convert(varchar(10),@WOpenQty)
+					where MatNo=@WIECPN and INVDate=@INVDate and MaterialProperty='FG' and POVendor=@WPOVendor
+					/*'+convert(varchar(10),@WX)+'*/
+					insert #WHResult values(@WX,@WIECPN,@WIECPN,1,@WOpenQty,@INVDate)
+					select @WOpenQty=0  																	                               
+				end    --14  
+		--	end  --12 
+	------------------------------------------------------------------------------ 
+    end  --10    
+    select @DetailQty=0 
+end --1121
+---------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------
+---Only OpenQty>0 need to check detail ,else ,go next .
+if @WOpenQty>0 
+begin --112     
+       insert #tmpWH
+            --select distinct @WOpenQty,RefPN,ShortagePN,Qty,0 from #AAResult where POVendor=@WPOVendor and PF=@WIECPN order by RefPN
+            select distinct @WOpenQty,'',ShortagePN,Qty,0 from #AAResult where POVendor=@WPOVendor and PF=@WIECPN order by ShortagePN
+   
+            select @iX=min(iid) from #tmpWH
+            select @iY=max(iid) from #tmpWH
+            
+--select * from    #tmpWH
+            while @iX<=@iY ----2nd loop begin
+            begin --1
+                     insert #midWH
+                          select distinct OpenQty,ShortagePN,Qty,INV,0,0 from #tmpWH where iid=@iX
+                         
+                     select @mwX=min(iid) from #midWH
+                     select @mwY=max(iid) from #midWH
+--select 	 @mwX,@mwY
+---Debug 
+--select * from #midWH 
+                 
+              while @mwX<=@mwY
+              begin --301             
+						if exists(select * from #midWH where ShortagePN like '%*' and iid=@mwX)
+						begin --2
+						 update #midWH set INV=b.Qty from #midWH a,
+						 (	
+						    select MS,Qty=sum(Qty) from
+						    (					 
+						    select MS,Qty=sum(a.Qty) from #INV a,
+						   (select distinct MS,ShortagePN from #Alternative where MS in
+						    (select distinct ShortagePN from #midWH where ShortagePN like '%*' and iid=@mwX) and POVendor=@WPOVendor and PF=@WIECPN) 
+						    as b where a.MatNo=b.ShortagePN and a.MaterialProperty='FG'
+						    group by MS
+						    union
+						    select MS=MatNo,Qty=sum(Qty) from #INV where MatNo=(select distinct ShortagePN from #midWH where iid=@mwX) group by MatNo					    
+						    ) as a group by MS
+
+						  ) as b where a.ShortagePN=b.MS and a.iid=@mwX						  
+
+/*-----test
+						    select MS,Qty=sum(Qty) from
+						    (					 
+						    select MS,Qty=sum(a.Qty) from #INV a,
+						   (select distinct MS,ShortagePN from #Alternative where MS in
+						    (select distinct ShortagePN from #midWH where ShortagePN like '%*' and iid=@mwX) and POVendor=@WPOVendor and PF=@WIECPN) 
+						    as b where a.MatNo=b.ShortagePN and a.MaterialProperty='FG'
+						    group by MS
+						    union
+						    select MS=MatNo,Qty=sum(Qty) from #INV where MatNo=(select distinct ShortagePN from #midWH where iid=@mwX) group by MatNo					    
+						    ) as a group by MS
+-----*/						    
+						end   --2
+						else						 
+						begin --3
+							update #midWH set INV=b.Qty from #midWH a,(select POVendor,MatNo,Qty=sum(Qty)from #INV where MaterialProperty='FG' group by POVendor,MatNo)
+							b where a.ShortagePN=b.MatNo and a.iid=@mwX /*and b.MaterialProperty='FG'*/ and POVendor=@WPOVendor
+ 						end  --3
+			   select @mwX=@mwX+1			
+               end --301  
+			  insert #rltWH
+					select OpenQty,ShortagePN,Qty,INV,fillQty,NeedQty  from #midWH
+				truncate table #midWH
+
+-- select * from #rltWH     
+  ---Get fillQty
+ update #rltWH set fillQty=convert(int,INV/Qty)  
+                              
+---Debug 
+--select * from #rltWH  
+if exists(select * from #rltWH where fillQty=0)
+begin --20131121_1 
+   ----Some Material shortage ,ignore all WHResult for this ID
+   --select 'YES'
+   truncate table #rltWH
+   delete from #tmpWH
+   delete from #WHResult where iid=@WX
+end --20131121_1 
+else
+begin  --20131121_2       
+                      
+                     ---If the fillQty exists 0 ,then check next                  
+ /*
+                     if exists(select * from #midWH where fillQty=0)
+                     begin  --4
+                         select @iX=@iX+1
+                         delete from #midWH
+                     end    --4
+                     else
+ */                   
+ --                    begin  --5                          
+                        select @minQty=min(fillQty) from #rltWH --找成套量 (fillQty 最小值) 
+                       
+                       ---Get NeedQty
+                        update #rltWH set NeedQty=case when @minQty*Qty>OpenQty*Qty then OpenQty*Qty else @minQty*Qty end   
+ 
+                  select @iX=@iX+1
+                 --update #midWH set NeedQty=@mQty where iid=@mX 
+                 --select * from #midWH
+                 --delete from #midWH  
+            --select * from #midWH
+            --select * from #tmpWH         
+     end --20131121_2   
+end  --1----2nd loop end        
+
+
+---Debug 
+--select * from #rltWH
+ 
+                        select @mX=min(iid) from #rltWH
+                        select @mY=max(iid) from #rltWH
+                        while @mX<=@mY
+                        begin --6
+                             select @mat=ShortagePN,@mQty=NeedQty,@usage=Qty from #rltWH where iid=@mX
+--debug
+--select '1448',@mat,@minQty,@mQty
+
+--select * from #rltWH 
+                             
+                             if(@mat like '%*') ----If Alternative existed 
+                             begin --7
+                             ---Original PN need to add
+                             ---(2012/12/21) need to get original PN first
+                                 insert #altWH
+									select @mQty,ShortagePN from #Alternative where POVendor=@WPOVendor and PF=@WIECPN and MS=@mat   
+                
+                                 insert #altWH
+									select @mQty,@mat from #rltWH where iid=@mX
+
+                                 
+--select @mat 
+--select * from #midWH                                
+--select * from #altWH                              
+                                 select @altX=min(iid) from #altWH
+                                 select @altY=max(iid) from #altWH 
+                          
+                                 while @altX<=@altY ----3rd Loop begin                                 
+                                 begin --9
+										select @altQty=NeedQty,@altMatNo=ShortagePN from #altWH where iid=@altX
+--select '@altQty'=@altQty,'@altMatNo'=@altMatNo,'@mat'=@mat
+										--if exists(select * from #INV where POVendor=@WPOVendor and MatNo=@altMatNo and MaterialProperty='FG' and Qty>0)
+										--begin --10
+										-- (2012/11/05)select top 1  @altINV=Qty from #INV where POVendor=@WPOVendor and MatNo=@altMatNo and MaterialProperty='FG' order by INVDate
+                                       ----------------------------------------------------------------------------
+											while exists(select * from #INV where POVendor=@WPOVendor and MatNo=@altMatNo and MaterialProperty='FG' and Qty>0) and @altQty>0
+											begin --12
+												select top 1 @DetailQty=Qty,@INVDate=INVDate from #INV where POVendor=@WPOVendor and MatNo=@altMatNo and MaterialProperty='FG' and Qty>0 order by INVDate
+--debug
+--select '@DetailQty'=@DetailQty,@altQty
+--select top 1 * from #INV where POVendor=@WPOVendor and MatNo=@altMatNo and MaterialProperty='FG' and Qty>0 order by INVDate	
+												if @altQty>=@DetailQty
+												 begin --13
+													 ----INV 變 0
+													update #INV set Qty=0,Remark=rtrim(Remark)+';('+convert(varchar(10),@WX)+')-->'+convert(varchar(10),@DetailQty)
+													where MatNo=@altMatNo and INVDate=@INVDate and MaterialProperty='FG' and POVendor=@WPOVendor													
+													/*'+convert(varchar(10),@WX)+'*/
+													insert #WHResult values(@WX,@mat,@altMatNo,@usage,@DetailQty,@INVDate)
+													 set @altQty=@altQty-@DetailQty	
+													 --set @DetailQty=0									 
+													 --select @altQty,@DetailQty																							 
+													 update #altWH set NeedQty=@altQty --where iid=@altX
+													 --select * from #altWH
+													 update #rltWH set NeedQty=@altQty where ShortagePN=@mat 
+											     end  --13
+												 else
+												 begin  --14
+													---INV 減少
+													update #INV set Qty=@DetailQty-@altQty,Remark=rtrim(Remark)+';('+convert(varchar(10),@WX)+')-->'+convert(varchar(10),@altQty)
+													where MatNo=@altMatNo and INVDate=@INVDate and MaterialProperty='FG' and POVendor=@WPOVendor
+													/*'+convert(varchar(10),@WX)+'*/
+													insert #WHResult values(@WX,@mat,@altMatNo,@usage,@altQty,@INVDate)																											
+													set @altQty=0  
+													--set @DetailQty=@DetailQty-@altQty
+													--select @altQty,@DetailQty
+													update #altWH set NeedQty=0--@altQty --where iid=@altX	
+													update #rltWH set NeedQty=0 where ShortagePN=@mat											                               
+												 end    --14 					 											 
+										     end  --12 
+										------------------------------------------------------------------------------ 
+                                        --end  --10    
+                                        select @altX=@altX+1 
+                                        --set @altQty=0
+                                        --set @altMatNo=''
+                                 end  --9 ----3rd Loop end 
+                                 --update #rltWH set NeedQty=(select sum(@altQty) from #altWH) where iid=@mX  
+--select * from #rltWH                              
+--select * from #altWH                                     
+                                 
+                                 truncate table #altWH	
+                             end --7
+                             if ((@mat like '13%' and len(rtrim(@mat))=12) or len(rtrim(@mat))=12) ----(2013/02/05) ,add "and len(rtrim(@mat))=12" . If Alternative deosn't existed 
+                             begin --8
+                                  --select * from #rltWH
+                                  if exists(select * from #INV where POVendor=@WPOVendor and MatNo=@mat and MaterialProperty='FG' and Qty>0)
+								  begin --15
+								  while @mQty>0 --19							  
+                                  begin
+--Debug
+--select '@mQty'=@mQty	                                 
+								      select top 1 @DetailQty=Qty,@INVDate=INVDate from #INV where POVendor=@WPOVendor and MatNo=@mat and MaterialProperty='FG' and Qty>0 order by INVDate
+								      --select '@DetailQty'=@DetailQty
+								      ----Debug
+								      --select @mQty,@mat
+								      --select * from #INV where MatNo='1310A2850601'
+								      if @mQty>=@DetailQty
+									  begin  --17
+											----INV 變 0
+											update #INV set Qty=0,Remark=rtrim(Remark)+';('+convert(varchar(10),@WX)+')-->'+convert(varchar(10),@DetailQty)
+											where MatNo=@mat and INVDate=@INVDate and MaterialProperty='FG'	 and POVendor=@WPOVendor										
+											insert #WHResult values(@WX,@mat,@mat,@usage,@DetailQty,@INVDate)
+											select @mQty=@mQty-@DetailQty
+											update #rltWH set NeedQty=@mQty where ShortagePN=@mat
+                                               
+									  end     --17
+									  else
+									  begin   --18
+											---INV 減少
+											update #INV set Qty=@DetailQty-@mQty,Remark=rtrim(Remark)+';('+convert(varchar(10),@WX)+')-->'+convert(varchar(10),@mQty)
+											where MatNo=@mat and INVDate=@INVDate and MaterialProperty='FG' and POVendor=@WPOVendor
+											/*'+convert(varchar(10),@WX)+'*/
+											insert #WHResult values(@WX,@mat,@mat,@usage,@mQty,@INVDate)
+											select @mQty=0   
+											update #rltWH set NeedQty=@mQty where ShortagePN=@mat                               
+									  end     --18
+								   end --19								      
+								  end  --15	
+							 end --8  
+						select @mX=@mX+1                        					
+                        end --6                          
+--                     end --5
+	 --------------------------------------------------------------------------------------------------------------------------------------------
+     select @WX=@WX+1
+	 truncate table #rltWH
+     delete from #tmpWH --------------------------------------------------------------------------------------------------------------------------------------------
+end   --112
+else
+begin  --113
+    select @WX=@WX+1
+end    --113
+end   --111 ----1st loop end
+
+
+
+/*
+select * from #WH6070B0637602*
+select * from #AAResult where PF='PFBH01BLB002'
+select * from #tmp_OPO where iid in (select iid from #tmp_OPO where IECPN='PFED01ALM002')
+select * from #WHResult where iid in (select iid from #tmp_OPO where IECPN='PFED01ALM002')
+select * from #WHFinal where iid in (select iid from #tmp_OPO where IECPN='PFED01ALM002')
+select * from #tmpETA where iid in (select iid from #tmp_OPO where IECPN='PFED01ALM002')
+select * from #WHResult2 where iid in (select iid from #tmp_OPO where IECPN='PFED01ALM002')
+select * from #SHResult where iid in (select iid from #tmp_OPO where IECPN='PFED01ALM002')
+
+select * from #WHResult2 where iid in (select iid from #tmp_OPO where IECPN like 'PFBU01KMB%')
+
+*/
+--select * from #WHResult where iid=1120
+---------Get ETA
+/*
+drop table #tmpETA
+drop table #WHmid
+drop table #WHmid2
+drop table #WHPN
+drop table #midFinal
+drop table #WHFinal
+drop table #WHFinaltmp
+drop table #WHcount
+drop table #ETAQty
+drop table #WHResult2
+drop table #SHResult
+drop table #PFWH
+Drop table #ETAfinal
+*/
+create table #tmpETA(iid int,PN varchar(20),Qty float,INVDate char(10))
+create table #WHmid(iid int identity(1,1),PN varchar(20),Qty float,INVDate char(10),RefQty int,Result int)
+create table #WHmid2(PN varchar(20),Qty float,INVDate char(10),RefQty int,Result int)
+create table #midFinal(PN varchar(20),Qty float,INVDate char(10))
+create table #WHPN(pid int identity(1,1),PN varchar(20))
+create table #WHFinal(iid int,Qty float,INVDate char(10))
+create table #WHcount(Wid int identity,iid int,DateQty varchar(50))
+create table #WHResult2(iid int,PN varchar(20),Usage float,Qty float,INVDate char(10))
+
+------(2016/03/17) Solve the Shortage not correct issue .
+insert #WHResult2
+   select iid,PN,Usage,Qty=sum(Qty),INVDate from #WHResult where not substring(PN,2,1)='F' group by iid,PN,Usage,INVDate
+
+------(2018/06/27) correct the mistake which cause ETA wrong ...
+insert #WHFinal
+		select distinct iid,qty=convert(int,Qty/Usage),ETA=max(INVDate) from #WHResult2 where not iid in (
+		select iid from (
+		--select iid,PN,qty=count(*) from #WHResult2 group by iid,PN) as a where qty>1) group by iid,Qty/Usage order by iid
+		select iid,qty=count(*) from #WHResult2 group by iid) as a where qty>1) group by iid,Qty/Usage order by iid
+
+insert #tmpETA
+     select distinct iid,PN,qty=convert(int,Qty/Usage),INVDate from #WHResult2 where not iid in (select distinct iid from #WHFinal)
+
+
+--update #tmpETA set Qty=525 where iid=64 and Qty=2 and INVDate='2018/08/23' and PN='6024B0202701*'
+--update #tmpETA set Qty=2 where iid=64 and Qty=7 and INVDate='2018/08/03' and PN='6047B0072401*'
+--update #tmpETA set Qty=5 where iid=64 and Qty=525 and INVDate='2018/08/02' and PN='6047B0072401*'
+/*
+select * from #tmpETA where iid=1727 order by INVDate,Qty
+select * from #WHFinal where iid=1727 order by INVDate,Qty
+select PN,Qty,INVDate,0,0 from #tmpETA where iid=1727 order by INVDate,Qty
+select * from #WHmid
+insert #WHmid
+			select PN,Qty,INVDate,0,0 from #tmpETA where iid=1727 order by INVDate,Qty
+
+select top 1 PN,Qty,INVDate from #WHmid where not Qty=0  order by INVDate,Qty desc  
+--delete from #tmpETA where Qty=0
+*/
+declare @mi int
+declare @mj int
+declare @PNQty int
+declare @PN varchar(20)
+declare @Qty float
+declare @pnINVDate char(10)
+declare @pni int
+declare @pnj int
+declare @mPN varchar(20)
+declare @midPN varchar(20)
+declare @midQty float
+declare @midINVDate char(10)
+declare @fi int
+declare @fj int
+declare @fPN varchar(20)
+declare @fQty int
+
+select @mi=min(iid) from #tmpETA
+select @mj=max(iid) from #tmpETA
+ 
+--select @mi=3926
+--select @mj=3926
+ 
+while @mi<=@mj
+begin --111
+     if exists(select * from #tmpETA where iid=@mi)
+	 begin
+		insert #WHmid
+			select PN,Qty,INVDate,0,0 from #tmpETA where iid=@mi order by INVDate,Qty
+        
+			--select @mi
+     
+			select @PNQty=count(*) from (select distinct PN from #WHmid) as a
+	   
+			--while (select count(*) from (select distinct PN from #WHmid) as a )=@PNQty
+			while exists(select * from #WHmid)
+				begin --112     
+					--select top 1 @PN=PN,@Qty=Qty,@pnINVDate=INVDate from #WHmid where not Qty=0  order by INVDate ,Qty
+					select  @PN=PN,@Qty=Qty,@pnINVDate=INVDate from #WHmid where iid=(select min(iid) from #WHmid where not Qty=0)
+					
+					update #WHmid set RefQty=@Qty 
+					update #WHmid set Result=Qty-RefQty 
+					--select '1',* from #WHmid
+					select @fi=min(iid) from #WHmid
+					select @fj=max(iid) from #WHmid
+					while (@fi<=@fj)
+					begin
+						if exists(select * from #WHmid where iid=@fi and RefQty<=Qty)
+						begin
+							select @fPN=PN from #WHmid where iid=@fi
+							update #WHmid set RefQty=0,Result=0 where iid>@fi and PN=@fPN							
+						end
+						else
+						begin
+							select @fPN=PN,@fQty=RefQty-Qty from #WHmid where iid=@fi
+							update #WHmid set RefQty=@fQty,Result=Qty-@fQty where iid>@fi and PN=@fPN							
+						end
+						select @fi=@fi+1
+					end
+					insert #WHFinal
+						select @mi,@Qty,max(INVDate) from #WHmid where RefQty>0 
+					--select '2',* from #WHmid
+					update #WHmid set Qty=Result where RefQty>0 					
+					delete from #WHmid where RefQty>0 and Result<=0
+					update #WHmid set RefQty=0,Result=0
+	
+					--select '3',* from #WHmid
+
+					insert #WHmid2
+						select PN,Qty,INVDate,RefQty,Result from #WHmid order by Qty,INVDate
+
+					--select* from #WHmid2
+					delete from #WHmid
+					insert #WHmid
+						select * from #WHmid2 order by Qty,INVDate
+
+					--select* from #WHmid					
+					delete from #WHmid2
+--(2018/08/24) solve the wrong ETA data which found by Sandy...
+					--insert #WHFinal 
+					--select top 1 @mi,@Qty,INVDate from #WHmid where Result>=0 and RefQty=@Qty  order by INVDate desc--and PN=@PN and INVDate=@pnINVDate
+                    
+                    --select * from #WHFinal
+					--delete from #WHmid where Result=0
+                
+					--update #WHmid set Qty=Result,RefQty=0,Result=0 where Result>0
+        
+					--select * from #WHmid   
+				end --112      
+			delete from #WHmid
+			--delete from #WHmid2
+			select @PN='',@Qty=0,@pnINVDate=''      
+	end      
+      select @mi=@mi+1     
+ end--111  
+ 
+--select * from #tmpETA 
+--select distinct PN from (select * from #tmpETA where iid=3926) as a
+--select * from #tmpETA where iid=3926 order by INVDate ,Qty
+select * into #WHFinaltmp from #WHFinal
+delete from #WHFinal
+insert #WHFinal
+	select iid,Qty=sum(Qty),INVDate from #WHFinaltmp group by iid,INVDate
+
+--select * from #WHFinal where iid=3926
+ 
+ 
+
+--(2016/06/06) Add PF back
+select * into #PFWH from #WHResult where substring(PN,2,1)='F' 
+
+update #WHFinal set Qty=a.Qty+b.Qty from #WHFinal a,#PFWH b where a.iid=b.iid and a.INVDate=b.INVDate
+
+delete from #PFWH from #WHFinal a,#PFWH b where a.iid=b.iid and a.INVDate=b.INVDate
+
+insert #WHFinal
+select distinct iid,Qty,INVDate from #PFWH
+
+
+insert #WHcount
+   select iid,INVDate+'*'+convert(varchar(10),Qty) from #WHFinal where INVDate=convert(char(10),getdate(),111) and Qty>=1--(?? need to check) Qty>0
+ 
+--Future Order add 14 more days .
+insert #WHcount
+/*
+   select iid,
+   convert(char(10),dateadd(dd,4,convert(datetime,INVDate+' 00:00')),111)
+   +'*'+convert(varchar(10),Qty) from #WHFinal where not INVDate=convert(char(10),getdate(),111)
+*/
+   select a.iid,
+   case when substring(b.IECPN,8,2)='MB' then convert(char(10),dateadd(dd,14,convert(datetime,a.INVDate+' 00:00')),111)
+   else convert(char(10),dateadd(dd,7,convert(datetime,a.INVDate+' 00:00')),111) end
+   +'*'+convert(varchar(10),a.Qty) from #WHFinal a,#tmp_OPO b where a.iid=b.iid and not INVDate=convert(char(10),getdate(),111)
+
+--Drop table #ETAQty
+create table #ETAQty(iid int,OPOR varchar(200))
+
+
+insert #ETAQty
+    select distinct iid,'' from #WHcount order by iid
+    
+declare @la int
+declare @lb int
+select @la=min(Wid) from #WHcount
+select @lb=max(Wid) from #WHcount
+
+while @la<=@lb
+begin
+    update #ETAQty set OPOR=rtrim(a.OPOR)+rtrim(b.DateQty)+' , ' from #ETAQty a,#WHcount b where a.iid=b.iid and b.Wid=@la
+    select @la=@la+1
+end
+
+update #ETAQty set OPOR=left(OPOR,len(OPOR)-1)
+
+--select * from #SHResult where iid='116'
+--drop table #SHResult
+------(2013/07/24) Not Shortage Flag Logic
+----Find Current INV existed .
+select a.iid,a.OpenQty,b.WHQty,RR=a.OpenQty-b.WHQty-a.DockQty into #SHResult from #tmp_OPO a,
+(select iid,WHQty=sum(Qty) from #WHFinal where INVDate<=convert(char(10),getdate(),111) group by iid) as b where a.iid=b.iid
+
+update #tmp_OPO set Shortage='N' from #tmp_OPO a,#SHResult b where a.iid=b.iid and RR=0
+update #tmp_OPO set Shortage='Y' from #tmp_OPO a,#SHResult b where a.iid=b.iid and RR>0
+update #tmp_OPO set Shortage='Y' from  #tmp_OPO a,#AAResult b where a.POVendor=b.POVendor and a.IECPN=b.PF and a.Shortage=''
+
+update #tmp_OPO set Shortage='N' where Shortage=''
+
+----2013/08/22 ---Correct OpenQty calculation rule
+update #tmp_OPO set OpenQty=POQty-DockQty-ShipQty where PType='ZN'
+update #tmp_OPO set Shortage='N' where PType='ZN' and OpenQty='0'
+
+--select * from #tmp_OPO where iid='3926'
+
+
+/*
+Drop table #ETAfinal
+*/
+
+create table #ETAfinal(iid int,OpenQty int,CurrentDone int,FutureDone int,FirstSupportDate char(10),LastSupportDate char(10))
+insert #ETAfinal
+select a.iid,OpenQty,CurrentDone/*=case when FD is null then CurrentDone else OpenQty-FD end*/
+,FutureDone=isnull(FD,'') ,FristSupportDate=isnull(MD,''),LastSupportDate=isnull(LD,'') from
+(select a.iid,OpenQty=OpenQty-DockQty,
+CurrentDone=case when Shortage='N' then OpenQty-DockQty else isnull(CD,'') end from
+(select * from #tmp_OPO where PType='NB') as a left join
+(select iid,CD=sum(Qty) from #WHFinal where INVDate<=convert(char(10),getdate(),111) group by iid) as b on a.iid=b.iid 
+) as a left join
+(select iid,MD=max(INVDate),LD=max(INVDate),FD=sum(Qty) from #WHFinal where INVDate>convert(char(10),getdate(),111) group by iid) as b on a.iid=b.iid order by a.iid
+
+insert #ETAfinal
+    select iid,OpenQty,CurrentDone=0,FutureDone=0,FristSupportDate='',LastSupportDate='' from #tmp_OPO where PType='ZN'
+
+/*
+select * from #tmpETA where iid=3926 order by INVDate ,Qty
+select * from #ETAfinal where iid='3928'
+select * from #WHFinal where iid='3926'
+*/
+
+---------------------------------------------------New Report -----------------------------------------------------
+delete from OPS_INV
+delete from OPS_tmp_OPO
+delete from OPS_ETAfinal
+delete from OPS_AAResult
+delete from OPS_Alternative
+delete from OPS_ETAQty
+delete from OPS_Mat_SA
+delete from OPS_Mat_PF
+delete from OPS_WHFinal where Customer='HP'
+
+insert OPS_INV
+      select *,getdate() from #INV
+
+insert OPS_tmp_OPO
+      select *,getdate() from #tmp_OPO
+      
+insert OPS_ETAfinal
+      select *,getdate() from #ETAfinal
+
+insert OPS_AAResult
+       select *,getdate() from #AAResult
+
+insert OPS_Alternative
+       select *,getdate() from #Alternative
+
+insert OPS_ETAQty
+       select *,getdate() from #ETAQty
+
+insert OPS_Mat_SA
+       select *,getdate() from #Mat_SA
+
+insert OPS_Mat_PF
+       select *,getdate() from #Mat_PF
+       
+insert OPS_WHFinal
+       select 'HP',*,getdate() from #WHFinal     
+       
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+--------Data Captured------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+--select 'OK'
+
+
+
+delete from OPS_OPO where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_OPOR1 where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_OPOR2 where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_OPOSummary where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_OPOSummary2 where Customer='HP' and ReportDate=convert(char(10),getdate(),111)---Do not Clear historical data .
+delete from OPS_OM where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_Material where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_MSummaryPIC where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_MSummaryType where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_Alt where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_Inventory where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_RawOPO where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_OTDFailD where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+delete from OPS_OTDFailS where Customer='HP' and (ReportDate=convert(char(10),getdate(),111) or ReportDate<=convert(char(10),dateadd(dd,-90,getdate()),111))
+/*
+select * from OPS_OPO where Customer='HP'
+select * from OPS_OPOR1 where Customer='HP'
+select * from OPS_OPOR2 where Customer='HP'
+select * from OPS_OPOSummary where Customer='HP'
+select * from OPS_OPOSummary2 ---Do not Clear data .
+select * from OPS_OM where Customer='HP'
+select * from OPS_Material where Customer='HP'
+select * from  OPS_MSummaryPIC where Customer='HP'
+select * from  OPS_MSummaryType where Customer='HP'
+select * from  OPS_Alt where Customer='HP'
+select * from  OPS_Inventory where Customer='HP'
+select * from  OPS_RawOPO where Customer='HP'
+select * from  OPS_OTDFailD where Customer='HP'
+*/
+--drop table #OPODetail
+--select * from #OPODetail where IECPN='6054B1585801'
+-----Get OPO Report
+----OPO SDetail
+--drop table #OPODetail
+select a.*,OPOR=isnull(OPOR,''),RMA_FG=0 into #OPODetail from
+(
+select a.*,SameMonthFCST=isnull(b.M1,0) from
+(
+select a.iid,a.Site,a.PIC,a.PO,a.SO,a.IECPO,a.POItem,a.CPQNo,a.IECPN,ProductFamily,
+POVendor,POReceiveDate,PO_Type,Model_Status,MP,FCST_Status,PType,NeedShipDate,POQty,DNQty,
+DockQty,ShipQty,b.OpenQty,b.CurrentDone,b.FutureDone,FutureFirstSupportDate=b.FirstSupportDate,FutureLastSupportDate=b.LastSupportDate,
+Shortage=case when POQty-DockQty-ShipQty-CurrentDone>0 then 'Y' else 'N' end,Escalation,EscalationDate,a.Remark  from OPS_tmp_OPO a,OPS_ETAfinal b where a.iid=b.iid
+) as a left join
+(select POVendor=case when POVendor='CP81' then 'IES' when POVendor='CP60' then 'ICC' end,IECPN,M1=sum(M1) from FCST 
+where FCSTDate=convert(char(7),dateadd(mm,-1,getdate()),111)+'/01' group by POVendor,IECPN) as b
+on a.POVendor=b.POVendor and a.IECPN=b.IECPN 
+) as a left join
+(select * from OPS_ETAQty) as b on a.iid=b.iid order by iid
+
+----Remove OPOR if PType='ZN'
+update #OPODetail set OPOR='' where PType='ZN'
+ 
+update #OPODetail set OPOR='' where Shortage='N' and OpenQty-CurrentDone=0 
+--update #OPODetail set OPOR=NeedShipDate+'*'+convert(varchar(10),CurrentDone) where OpenQty=CurrentDone --and OPOR='' 
+update #OPODetail set OPOR='Wait for Pick up' where OpenQty=0 and DockQty>0 and OPOR=''
+update #OPODetail set OPOR='Checking' where Shortage='Y' and OPOR=''
+update #OPODetail set OPOR='DN Created' where Shortage='N' and OpenQty=DNQty and OPOR=''
+update #OPODetail set OPOR='Need to Create DN ASAP' where Shortage='N' and OpenQty=CurrentDone 
+and datediff(dd,getdate(),convert(datetime,NeedShipDate+' 00:00'))<=7 
+and datediff(dd,getdate(),convert(datetime,NeedShipDate+' 00:00'))>=0 and OPOR=''
+
+update #OPODetail set OPOR='Please arrange Shipment ASAP' where CurrentDone>0 and NeedShipDate<=convert(char(10),getdate(),111) and OPOR=''
+
+update #OPODetail set OPOR='(Potential OTD Fail!!) '+rtrim(OPOR) where FutureFirstSupportDate>NeedShipDate and NeedShipDate>=convert(char(10),getdate(),111)
+
+update #OPODetail set OPOR='(OTD Fail!!) '+rtrim(OPOR) where OpenQty>0 and NeedShipDate<=convert(char(10),getdate(),111) and not OPOR like '%OTD Fail!!%'
+
+update #OPODetail set OPOR='(Potential OTD Fail!!) '+rtrim(OPOR) where OpenQty>0
+and NeedShipDate>convert(char(10),getdate(),111) and NeedShipDate<=convert(char(10),dateadd(mm,1,getdate()),111) 
+and not OPOR like '%OTD Fail!!%' and OPOR like 'Checking%'
+
+update #OPODetail set OPOR='(Potential OTD Fail!!) '+rtrim(OPOR) where OpenQty>0
+and NeedShipDate>convert(char(10),getdate(),111) and convert(char(10),dateadd(dd,4,convert(datetime,FutureFirstSupportDate)),111)>=NeedShipDate 
+and not OPOR like '%OTD Fail!!%' and Shortage='Y'
+
+update #OPODetail set OPOR='(Potential OTD Fail!!) '+rtrim(OPOR) where OpenQty>0
+and NeedShipDate>convert(char(10),getdate(),111) and NeedShipDate<=convert(char(10),dateadd(mm,1,getdate()),111) 
+and not OPOR like '%OTD Fail!!%' and Shortage='Y'
+
+
+--(2013/01/28) Correct Shortage
+update #OPODetail set Shortage='Y' where FutureDone>0
+
+
+
+---RMA FG Stock
+update #OPODetail set RMA_FG=b.Qty from #OPODetail a,OPS_INV b where a.POVendor=b.POVendor and a.IECPN=b.MatNo and b.MaterialProperty='RMA_FG'
+
+
+--------(2013/02/01) Find PF Substitution------------------------------
+--drop table #Sub
+--drop table #midSub
+create table #Sub(iid int identity(1,1),CPQNo varchar(20),SubPN varchar(200))
+create table #midSub(iid int identity(1,1),SubPN varchar(20))
+
+insert #Sub 
+     select distinct IECPN,'' from #OPODetail a,SubFRU b where a.IECPN=b.CPQNo and a.Shortage='Y' and not ECRStatus='CANCEL'
+   
+declare @x int
+declare @y int
+--declare @i int
+--declare @j int
+declare @pn varchar(20)
+select @x=MIN(iid)from #Sub
+select @y=Max(iid)from #Sub
+
+
+while @x<=@y
+  begin
+      insert #midSub
+          select distinct SubPN from SubFRU where CPQNo=(select rtrim(CPQNo) from #Sub where iid=@x) and not ECRStatus='CANCEL'
+      
+      select @i=MIN(iid)from #midSub
+      select @j=Max(iid)from #midSub
+      while @i<=@j
+      begin
+           select @pn=rtrim(SubPN) from #midSub where iid=@i
+           update #Sub set SubPN=RTRIM(SubPN)+@pn+';' where iid=@x
+           select @i=@i+1
+      end
+      truncate table #midSub
+      select @x=@x+1 
+  end
+
+update #Sub set SubPN=left(SubPN,len(rtrim(SubPN))-1) where len(SubPN)>0
+
+update #OPODetail set OPOR=rtrim(OPOR)+' ,***Substitution : '+rtrim(b.SubPN)+'***' from #OPODetail a,#Sub b where a.IECPN=b.CPQNo
+
+---(2017/07/18) Remove yesterday's tags .
+update #OPODetail set Remark=replace(replace(Remark,'<<Not Found in SPB>>',''),'  ','')where Remark like '%<<Not Found in SPB>>%'
+update #OPODetail set Remark=replace(replace(Remark,'<<No MP>>',''),'  ','') where Remark like '%<<No MP>>%'
+update #OPODetail set Remark=replace(replace(Remark,'<<New Model>>',''),'  ','') where Remark like '%<<New Model>>%'
+update #OPODetail set Remark=replace(replace(Remark,'<<No MP_New Model>>',''),'  ','') where Remark like '%<<No MP_New Model>>%'
+---(2017/07/18) Remove <<No MV>>
+update #OPODetail set Remark=replace(replace(Remark,'<<No MV>>',''),'  ','') where Remark like '%<<No MV>>%'
+
+--update #OPODetail set Remark='' where Remark in ('<<No MP>>','<<No MP_New Model>>')
+--update #OPODetail set Remark=substring(Remark,11,len(Remark)-10) where Remark like '<<No MP>>%'
+--update #OPODetail set Remark=substring(Remark,20,len(Remark)-19) where Remark like '<<No MP_New Model>>%'
+
+update #OPODetail set Remark='<<No MP>> '+rtrim(Remark) from #OPODetail a,Maggie_FRUnoMP b where a.IECPN=b.FRUPN 
+update #OPODetail set Remark=replace(replace(a.Remark,'<<No MP>>','<<New Model>>'),'  ','') from #OPODetail a, ModelID b where Remark like '<<No MP>>%' and a.ProductFamily=b.SAPPlatform and b.FCS_Dt>getdate()
+/*
+---(2017/07/18) add No MV .
+update #OPODetail set Remark='<<No MV>> '+rtrim(Remark) from #OPODetail a,NPInoMV b where a.IECPN=b.IECPN and PCPODate='2099/01/01'
+*/
+
+-----(2015/08/21 Check whether exists in SPB
+update #OPODetail set Remark='<<Not Found in SPB>>'+rtrim(Remark) from #OPODetail a,
+(
+select IECPN from (
+select * from
+(select distinct IECPN from #OPODetail) as a left join
+(select distinct ODMPartNumber from SPB) as b on a.IECPN=b.ODMPartNumber
+) as a where ODMPartNumber is null
+) as b where a.IECPN=b.IECPN
+-------------------------------
+---OPO Detail
+insert OPS_OPO
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),iid,Site,PIC,PO,SO,IECPO,POItem,CPQNo,IECPN,ProductFamily,
+POVendor,POReceiveDate,PO_Type,Model_Status,MP,FCST_Status,PType,NeedShipDate,POQty,DNQty,
+DockQty,ShipQty,OpenQty,RMA_FG,CurrentDone,FutureDone,FutureFirstSupportDate,--FutureLastSupportDate,
+Shortage,SameMonthFCST,OPOR,Escalation,EscalationDate,Remark from #OPODetail order by PIC,Site,NeedShipDate
+
+
+
+
+
+------OPOR Status--By Site
+insert OPS_OPOR1
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),Site,PIC,OPOR,NPI_ItemQty=sum(NPI_ItemQty),Normal_ItemQty=sum(Normal_ItemQty) from 
+(
+select Site,PIC,OPOR,NPI_ItemQty=sum(qty),Normal_ItemQty=0 from (
+select Site,PIC,
+OPOR=case 
+when (OPOR like '%Potential%' and OPOR like '%*%') then 'OPOR applied (Potential OTD Failed)' 
+when (OPOR like '%Potential%' and OPOR like '%Checking%') then 'Potential OTD Failed' 
+when OPOR like '%Fail%' then 'OPOR applied (OTD Failed)'
+when OPOR like '%*%' then 'OPOR Applied' 
+when OPOR ='' then 'Under Control' 
+else OPOR end,qty=count(*) from #OPODetail where PO_Type in ('NPI','NPI*') group by Site,PIC,OPOR
+) as a group by Site,PIC,OPOR 
+union
+select Site,PIC,OPOR,0,sum(qty) from (
+select Site,PIC,
+OPOR=case 
+when (OPOR like '%Potential%' and OPOR like '%*%')  then 'OPOR applied (Potential OTD Failed)' 
+when (OPOR like '%Potential%' and OPOR like '%Checking%') then 'Potential OTD Failed' 
+when OPOR like '%Fail%' then 'OPOR applied (OTD Failed)'
+when OPOR like '%*%' then 'OPOR Applied' 
+when OPOR ='' then 'Under Control' 
+else OPOR end,qty=count(*) from #OPODetail where not PO_Type in ('NPI','NPI*') group by Site,PIC,OPOR
+) as a  group by Site,PIC,OPOR 
+) as a group by Site,PIC,OPOR order by PIC,Site,OPOR
+
+
+------OPOR Status --By OPOR
+insert OPS_OPOR2
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOR,NPI_ItemQty=sum(NPI_ItemQty),Normal_ItemQty=sum(Normal_ItemQty) from 
+(
+select Site,PIC,OPOR,NPI_ItemQty=sum(qty),Normal_ItemQty=0 from (
+select Site,PIC,
+OPOR=case 
+when (OPOR like '%Potential%' and OPOR like '%*%') then 'OPOR applied (Potential OTD Failed)' 
+when (OPOR like '%Potential%' and OPOR like '%Checking%') then 'Potential OTD Failed' 
+when OPOR like '%Fail%' then 'OPOR applied (OTD Failed)'
+when OPOR like '%*%' then 'OPOR Applied' 
+when OPOR ='' then 'Under Control' 
+else OPOR end,qty=count(*) from #OPODetail where PO_Type in ('NPI','NPI*') group by Site,PIC,OPOR
+) as a group by Site,PIC,OPOR 
+union
+select Site,PIC,OPOR,0,sum(qty) from (
+select Site,PIC,
+OPOR=case 
+when (OPOR like '%Potential%' and OPOR like '%*%') then 'OPOR applied (Potential OTD Failed)' 
+when (OPOR like '%Potential%' and OPOR like '%Checking%') then 'Potential OTD Failed' 
+when OPOR like '%Fail%' then 'OPOR applied (OTD Failed)'
+when OPOR like '%*%' then 'OPOR Applied' 
+when OPOR ='' then 'Under Control' 
+else OPOR end,qty=count(*) from #OPODetail where not PO_Type in ('NPI','NPI*') group by Site,PIC,OPOR
+) as a  group by Site,PIC,OPOR 
+) as a group by OPOR order by OPOR
+
+
+----OPO Summary
+--Drop table #OPOSummary
+--OTD fail
+select Dt=convert(char(10),getdate(),111),PType,Site,PIC,allItem=sum(allItem),allqty=sum(allqty),newItem=sum(newItem),newQty=sum(newQty),/*,InFCST=sum(InFCST),Upside=sum(Upside)*/
+UpsideRate=convert(decimal(8,2),convert(float,sum(Upside))/
+case when convert(float,sum(allqty))=0 then 1 else convert(float,sum(allqty)) end *100),nearfailItem=sum(nearfailItem),
+nearfailqty=sum(nearfailqty),failItem=sum(failItem),failqty=sum(failqty),failpercentage=convert(decimal(8,2),convert(float,sum(failqty))/
+case when convert(float,sum(allqty))=0 then 1 else convert(float,sum(allqty)) end *100),
+NPIallItem=sum(NPIallItem),NPIallqty=sum(NPIallqty),
+NPInewItem=sum(NPInewItem),NPInewQty=sum(NPInewQty),
+NPInearfailItem=sum(NPInearfailItem),NPInearfailqty=sum(NPInearfailqty),
+NPIfailItem=sum(NPIfailItem),NPIfailqty=sum(NPIfailqty),
+NPIfailpercentage=convert(decimal(8,2),convert(float,sum(NPIfailqty))/
+case when convert(float,sum(NPIallqty))=0 then 1 else convert(float,sum(NPIallqty)) end *100) into #OPOSummary from
+(
+select Site,PIC,PType=left(IECPN,1),allItem=count(*),newItem=0,newQty=0,allqty=0,InFCST=0,Upside=0,nearfailItem=0,nearfailqty=0,failItem=0,failqty=0,
+NPIallItem=0,NPIallqty=0,NPInewItem=0,NPInewQty=0,NPInearfailItem=0,NPInearfailqty=0,NPIfailItem=0,NPIfailqty=0
+from #OPODetail where not PO_Type like 'NPI%' and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,count(*),0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 from #OPODetail where not PO_Type like 'NPI%' and POReceiveDate=convert(char(10),dateadd(dd,-1,getdate()),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1) 
+union
+select Site,PIC,PType=left(IECPN,1),0,0,sum(OpenQty),0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 from #OPODetail where not PO_Type like 'NPI%' and POReceiveDate=convert(char(10),dateadd(dd,-1,getdate()),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1) 
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,sum(OpenQty),0,0,0,0,0,0,0,0,0,0,0,0,0,0 from #OPODetail where not PO_Type like 'NPI%' and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,sum(OpenQty),0,0,0,0,0,0,0,0,0,0,0,0,0 from #OPODetail where not PO_Type like 'NPI%' and FCST_Status='IN'  and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,sum(OpenQty),0,0,0,0,0,0,0,0,0,0,0,0 from #OPODetail where not PO_Type like 'NPI%' and FCST_Status in ('UPSID','NO') and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,count(*),0,0,0,0,0,0,0,0,0,0,0 from #OPODetail where not PO_Type like 'NPI%' and  Shortage='Y' and NeedShipDate>=convert(char(10),getdate(),111) 
+and  NeedShipDate<convert(char(10),dateadd(dd,7,getdate()),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,sum(OpenQty),0,0,0,0,0,0,0,0,0,0 from #OPODetail where  not PO_Type like 'NPI%' and Shortage='Y' and NeedShipDate>=convert(char(10),getdate(),111) 
+and  NeedShipDate<convert(char(10),dateadd(dd,7,getdate()),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,count(*),0,0,0,0,0,0,0,0,0 from #OPODetail where  not PO_Type like 'NPI%' and NeedShipDate<convert(char(10),getdate(),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,sum(OpenQty),0,0,0,0,0,0,0,0 from #OPODetail where  not PO_Type like 'NPI%' and NeedShipDate<convert(char(10),getdate(),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,0,count(*),0,0,0,0,0,0,0 from #OPODetail where PO_Type like 'NPI%' and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,0,0,sum(OpenQty),0,0,0,0,0,0 from #OPODetail where  PO_Type like 'NPI%' and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,0,0,0,count(*),0,0,0,0,0 from #OPODetail where PO_Type like 'NPI%' and POReceiveDate=convert(char(10),dateadd(dd,-1,getdate()),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1) 
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,0,0,0,0,sum(OpenQty),0,0,0,0 from #OPODetail where PO_Type like 'NPI%' and POReceiveDate=convert(char(10),dateadd(dd,-1,getdate()),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1) 
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,0,0,0,0,0,count(*),0,0,0 from #OPODetail where PO_Type like 'NPI%' and  Shortage='Y' and NeedShipDate>=convert(char(10),getdate(),111) 
+and  NeedShipDate<convert(char(10),dateadd(dd,7,getdate()),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,sum(OpenQty),0,0 from #OPODetail where PO_Type like 'NPI%' and Shortage='Y' and NeedShipDate>=convert(char(10),getdate(),111) 
+and  NeedShipDate<convert(char(10),dateadd(dd,7,getdate()),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,count(*),0 from #OPODetail where PO_Type like 'NPI%' and NeedShipDate<convert(char(10),getdate(),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+union
+select Site,PIC,PType=left(IECPN,1),0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,sum(OpenQty) from #OPODetail where PO_Type like 'NPI%' and NeedShipDate<convert(char(10),getdate(),111) and not OpenQty=0 group by Site,PIC,left(IECPN,1)
+) as a --where not Site='ARVATO'
+group by Site,PIC,PType order by PType,failqty desc
+
+
+insert OPS_OPOSummary
+select Customer='HP',* from #OPOSummary
+
+--select * from OPS_OPOSummary2
+
+insert OPS_OPOSummary2
+select * from (
+select Customer,ReportDate,PType=case when PType='6' then 'Raw Material' else 'FRU' end,AllItem=sum(allItem),AllQty=sum(allqty)
+,NewItem=sum(newItem),NewQty=sum(newQty),NearFailItem=sum(nearfailItem),NearFailqty=sum(nearfailqty),
+FailItem=sum(failItem),Failqty=sum(failqty),FailPercentage=convert(decimal(8,2),convert(float,sum(failqty))/
+case when convert(float,sum(allqty))=0 then 1 else convert(float,sum(allqty)) end *100),
+NPIAllItem=sum(NPIallItem),NPIAllQty=sum(NPIallqty),
+NPINewItem=sum(NPInewItem),NPINewQty=sum(NPInewQty),NPINearFailItem=sum(NPInearfailItem),NPINearFailqty=sum(NPInearfailqty),
+NPIFailItem=sum(NPIfailItem),NPIFailqty=sum(NPIfailqty),NPIFailPercentage=convert(decimal(8,2),convert(float,sum(NPIfailqty))/
+case when convert(float,sum(NPIallqty))=0 then 1 else convert(float,sum(NPIallqty)) end *100)
+from OPS_OPOSummary where Customer='HP' and ReportDate=convert(char(10),getdate(),111) and PType='6' group by Customer,ReportDate,PType 
+union
+select Customer,ReportDate,PType,AllItem=sum(AllItem),AllQty=sum(allqty),
+NewItem=sum(NewItem),NewQty=sum(NewQty),NearFailItem=sum(nearfailItem),sum(nearfailqty),
+FailItem=sum(failItem),sum(failqty),Failpercentage=convert(decimal(8,2),convert(float,sum(failqty))/
+case when convert(float,sum(allqty))=0 then 1 else convert(float,sum(allqty)) end *100),
+NPIAllItem=sum(NPIAllItem),NPIAllQty=sum(NPIAllQty),
+NPINewItem=sum(NPINewItem),NPINewQty=sum(NPINewQty),NPINearFailItem=sum(NPINearFailItem),NPINearFailqty=sum(NPINearFailqty),
+NPIFailItem=sum(NPIFailItem),NPIFailqty=sum(NPIFailqty),NPIFailPercentage=convert(decimal(8,2),convert(float,sum(NPIFailqty))/
+case when convert(float,sum(NPIAllQty))=0 then 1 else convert(float,sum(NPIAllQty)) end *100)
+from (
+select Customer,ReportDate,PType=case when PType='6' then 'Raw Material' else 'FRU' end,AllItem=sum(allItem),allqty=sum(allqty),NewItem=sum(newItem),NewQty=sum(newQty),nearfailItem=sum(nearfailItem),nearfailqty=sum(nearfailqty),failItem=sum(failItem),failqty=sum(failqty),
+NPIAllItem=sum(NPIallItem),NPIAllQty=sum(NPIallqty),
+NPINewItem=sum(NPInewItem),NPINewQty=sum(NPInewQty),NPINearFailItem=sum(NPInearfailItem),NPINearFailqty=sum(NPInearfailqty),
+NPIFailItem=sum(NPIfailItem),NPIFailqty=sum(NPIfailqty)
+from OPS_OPOSummary where Customer='HP' and ReportDate=convert(char(10),getdate(),111) and not PType='6' group by Customer,ReportDate,PType 
+) as a group by Customer,ReportDate,PType 
+) as a 
+
+
+--drop table #OM
+--OPO & Shortage Material
+select distinct a.*,MaterialETA=isnull(b.MaterialETA,''),Remark=isnull(b.Remark,'') into #OM from
+(
+select a.iid,a.Site,a.IECPN,a.NeedShipDate,a.POVendor,a.OpenQty,a.ShortagePN,Material_descript,a.NeedQty
+,CurrentStock=isnull(b.CurrentQty,''),FutureStock=isnull(b.FutureQty,''),PIC from
+(
+select a.*,b.ShortagePN,NeedQty=OpenQty*b.Qty,Material_descript='( '+isnull(b.Material_group,'')+' )    '+isnull(b.Material_descript,''),PIC from
+(select a.iid,b.Site,b.IECPN,b.POVendor,b.NeedShipDate,OpenQty=a.OpenQty-a.CurrentDone from OPS_ETAfinal a,OPS_tmp_OPO b where a.iid=b.iid and a.OpenQty-a.CurrentDone>0 and PType='NB') as a left join
+(
+select a.*,PIC=case when a.ShortagePN like '13%' then 'Iris' 
+when a.ShortagePN like '146%' then 'Iris' 
+when a.ShortagePN like '164%' then 'Iris' 
+when a.ShortagePN like '15%' then 'David' else b.PIC end from 
+(
+
+select distinct * from
+(
+/*
+select a.*,b.Material_descript,b.Material_group from OPS_AAResult a,t_download_matmas_CP81DW b where left(a.ShortagePN,12)=b.Material
+union
+*/
+select a.*,b.Material_descript,b.Material_group from OPS_AAResult a,t_download_matmas_CP60DW b where left(a.ShortagePN,12)=b.Material
+) as a
+
+) as a left join
+(select * from MType) as b on a.Material_group=b.Material_group
+
+) as b on a.POVendor=b.POVendor and a.IECPN=b.PF
+) as a left join
+(
+select POVendor,MatNo,CurrentQty=sum(CurrentQty),FutureQty=sum(FutureQty) from(
+select POVendor,MatNo=MatNo,CurrentQty=sum(Qty),FutureQty=0 from OPS_INV where INVDate=convert(char(10),getdate(),111) group by POVendor,MatNo
+union
+select POVendor,MatNo=MatNo,0,sum(Qty) from OPS_INV where INVDate<>convert(char(10),getdate(),111) group by POVendor,MatNo
+union
+-----Need to include Alternative Stock
+select POVendor,MS,sum(Qty),0 from(
+select a.*,Qty=isnull(Qty,0) from
+(select distinct POVendor,MS,ShortagePN from OPS_Alternative) as a left join
+(select * from OPS_INV where  INVDate=convert(char(10),getdate(),111)) as b on a.ShortagePN=b.MatNo and a.POVendor=b.POVendor
+) as a group by POVendor,MS
+union
+select POVendor,MS,0,sum(Qty) from(
+select a.*,Qty=isnull(Qty,0) from
+(select distinct POVendor,MS,ShortagePN from OPS_Alternative) as a left join
+(select * from OPS_INV where  INVDate<>convert(char(10),getdate(),111)) as b on a.ShortagePN=b.MatNo and a.POVendor=b.POVendor
+) as a group by POVendor,MS
+) as a group by POVendor,MatNo 
+
+) as b on a.ShortagePN=b.MatNo and a.POVendor=b.POVendor 
+) as a left join
+(select * from Ivan_ShortageMaterialUpdate where convert(char(10),Cdt,111)=convert(char(10),getdate(),111) and Customer='HP') as b on a.POVendor=b.POVendor and a.ShortagePN=b.Material
+order by iid
+
+
+----(2024/12/18) modify MP M/B PIC to Iris
+----(2018/05/27) modify MP M/B PIC to Sandy
+----(2018/03/29) modify MP M/B PIC to Sammi
+----(2015/02/12 modify PICs)
+
+update #OM set PIC='Sammi' where left(IECPN,2) in ('SF','JF') and substring(IECPN,8,2)='BD'
+update #OM set PIC='David' where left(IECPN,2)='PF' and substring(IECPN,8,2)='RJ'
+
+update #OM set PIC='Iris' from #OM a,(
+select distinct a.POVendor,a.ShortagePN from #OM a,#OPODetail b where a.iid=b.iid and a.ShortagePN like '13%' and b.PO_Type in ('NPI','NPI*')) as b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+
+update #OM set PIC='Iris' from #OM a,(
+select distinct a.POVendor,a.ShortagePN from #OM a,#OPODetail b where a.iid=b.iid and a.ShortagePN like '13%' and b.MP='Y') as b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+
+-----(2016/05/27) add No MP in Remark
+update #OM set Remark=replace(Remark,'<<No MP>>','')
+
+/*
+update #OM set Remark='<<No MP>>'+rtrim(Remark) where ShortagePN in 
+(
+select distinct ShortagePN from 
+(
+select * from 
+(select distinct IECPN,ShortagePN from #OM) as a left join
+(select * from Maggie_FRUnoMP) as b on a.IECPN=b.FRUPN
+) as a where not FRUPN is null
+)
+*/
+--(2017/08/01) correct <No MP> flag by using IECPN .
+update #OM set Remark='<<No MP>>'+rtrim(Remark) where IECPN in (select distinct FRUPN from Maggie_FRUnoMP)
+
+--update #OM set  PIC='' where ShortagePN like '2BS%'
+
+
+insert OPS_OM
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),* from #OM
+
+
+
+----Check Date------------By Shortage PN
+/*
+drop table #Gating
+drop table #KBGating
+drop table #DD
+drop table #MV
+drop table #VD
+drop table #ShortageDetail
+drop table #MDCount
+drop table #SMCount
+drop table #MDCountTmp
+drop table #ShortageDetail_total
+drop table #WBinit
+drop table #WBresult
+drop table #WBmid
+*/
+------Get Gatting Report
+--drop table #Gating
+--drop table #KBGating
+select distinct POVendor,Material,Buyer,OpenPO,FCSTDemand=isnull(FCSTDemand,0),FCSTBalance,POBalance  into #Gating from Ivan_Gatting where DocWeek=(select max(DocWeek) from Ivan_Gatting where POVendor='ICC') and POVendor='ICC'
+
+---(2017/09/14) remove strange Material .
+delete from #Gating where Material='6025B0313601'
+----------------------------------
+
+----Get KB Material and transfer to major material
+--drop table #KBGating
+select POVendor,b.MS,Buyer,OpenPO=sum(OpenPO),FCSTDemand=sum(FCSTDemand),FCSTBalance=sum(FCSTBalance),POBalance=sum(POBalance) into #KBGating from #Gating a,
+(select distinct MS,Material from KBAlternative) as  b where a.Material=b.Material group by POVendor,b.MS,Buyer
+
+----update Major KB's OPO
+update #KBGating set OpenPO=b.Open_Qty from #KBGating a,
+(
+--select POVendor='IES',b.MS,Open_Qty=sum(convert(float,Open_Qty)) from ipc_t_download_nb_po a,KBAlternative b 
+--where a.Material=b.Material and S_loc='SW03' group by b.MS
+--union
+select POVendor='ICC',b.MS,Open_Qty=sum(convert(float,Open_Qty)) from icc_t_download_nb_po a,KBAlternative b 
+where a.Material=b.Material and S_loc='SW04' group by b.MS
+) as b where a.POVendor=b.POVendor and a.MS=b.MS
+
+update #KBGating set POBalance=OpenPO+FCSTBalance
+
+---Remove KB Material
+delete from #Gating from #Gating a,KBAlternative b where a.Material=b.Material
+
+
+----update All OPO
+update #Gating set OpenPO=b.Open_Qty from #Gating a,
+(
+--select POVendor='IES',Material,Open_Qty=convert(float,Open_Qty) from ipc_t_download_nb_po a where S_loc='SW03'
+--union
+select POVendor='ICC',Material,Open_Qty=convert(float,Open_Qty) from icc_t_download_nb_po a where S_loc='SW04'
+) as b where a.POVendor=b.POVendor and a.Material=b.Material
+
+update #Gating set POBalance=OpenPO+FCSTBalance
+
+---Combine KB to #Gating
+update #KBGating set MS=rtrim(MS)+'*'
+
+insert #Gating
+    select * from #KBGating
+
+create table #DD(iid int identity(1,1),Dt char(10))
+
+insert #DD
+select convert(char(10),Dt,111) from Calendar3 where Dt<=(select dateadd(dd,50,convert(datetime,max(NeedShipDate)+' 00:00')) from OPS_tmp_OPO where not NeedShipDate='2099/01/01' ) and 
+Dt>=(select dateadd(dd,-50,convert(datetime,min(NeedShipDate)+' 00:00')) from OPS_tmp_OPO) /*and WorkingDay=1*/ order by convert(char(10),Dt,111)
+
+
+create table #MV(Material varchar(20),PNQty int,PN varchar(1000),VendorQty int,Vendor varchar(1000))
+create table #VD(iid int identity(1,1),Material varchar(20),Priority varchar(20),VendorName varchar(50))
+insert #MV  
+   select distinct Material,0,'',0,'' from(
+   select distinct Material=replace(ShortagePN,'*','') from OPS_AAResult 
+   union   
+   select distinct Material=replace(Material,'*','') from #Gating
+   ) as a 
+
+insert #VD
+select distinct a.Material,a.Priority,b.Vendor_Name2 from t_download_sourcelist a,dbo.t_download_supplier_master b where a.Vendor1=b.Vendor_Code and not b.Vendor_Name2 is null
+and Plnt='CP60' and Material in (
+select distinct Material from #MV
+) order by Material,Priority
+
+update #MV set VendorQty=b.Qty from #MV a,(select Material,Qty=count(*) from #VD group by Material) as b where a.Material=b.Material
+
+--declare @i int 
+--declare @j int 
+select @i=min(iid) from #VD
+select @j=max(iid) from #VD
+
+while @i<=@j
+  begin
+      update #MV set Vendor=rtrim(Vendor)+rtrim(b.VendorName)+' /' from #MV a,(select Material,VendorName from #VD where iid=@i) as b where a.Material=b.Material
+      select @i=@i+1
+  end
+
+--drop table #ShortageDetail
+create table #ShortageDetail(POVendor varchar(20),ShortagePN varchar(20),PIC varchar(20),Material_descript varchar(100),SODate varchar(20),
+NeedShipDate varchar(20),LatestSODate varchar(20),LatestNeedShipDate varchar(20),Site varchar(20),Item varchar(20),RealOpenQty int,RestNeedQty int,RemainedStock int,Buyer varchar(50),Vendor varchar(500),
+EstETADate varchar(20),NewShortage varchar(20),MaterialETA varchar(500),Remark varchar(1000))
+
+insert #ShortageDetail 
+select distinct a.POVendor,a.ShortagePN,PIC,a.Material_descript,SODate,NeedShipDate,LatestSODate,LatestShipDate,Site,Item,RealOpenQty,0,0,Buyer=isnull(b.Buyer,''),Vendor,'','','','' from
+(
+
+select distinct a.*,b.VendorQty,Vendor from
+(select distinct POVendor,ShortagePN,PIC,Material_descript,SODate=min(POReceiveDate),NeedShipDate=min(NeedShipDate),LatestSODate=max(POReceiveDate),LatestShipDate=max(NeedShipDate),
+Site=count(distinct Site),Item=count(Item),RealOpenQty=sum(RealOpenQty*Qty) from
+ ( 
+ 
+select distinct a.*,ShortagePN=isnull(b.ShortagePN,''),Material_descript='( '+isnull(b.Material_group,'')+' )    '+isnull(b.Material_descript,''),Qty,
+PIC=case when ShortagePN like '13%' then 'Iris' 
+when ShortagePN like '146%' then 'Iris' 
+when ShortagePN like '164%' then 'Iris'
+when ShortagePN like '15%' then 'David' else b.PIC end from 
+(---Get Real OpenQty ---2013/05/16 remove ZN order .
+select a.iid,a.Site,a.PO,a.SO,a.Item,a.POVendor,a.POReceiveDate,a.IECPN,NeedShipDate,POQty,DockQty,ShipQty,RealOpenQty=b.OpenQty-b.CurrentDone,b.OpenQty,b.CurrentDone from OPS_tmp_OPO a,OPS_ETAfinal b where PType='NB' and  a.iid=b.iid
+and b.OpenQty-b.CurrentDone>0
+) as a left join
+(
+select a.*,b.PIC from 
+(
+select a.*,b.Material_descript,b.Material_group from OPS_AAResult a,
+
+(
+select distinct Material,Material_descript,Material_group from (
+/*
+select Material,Material_descript,Material_group from t_download_matmas_CP81DW
+union
+*/
+select Material,Material_descript,Material_group from t_download_matmas_CP60DW
+) as a
+) as b 
+--t_download_matmas b
+where left(a.ShortagePN,12)=b.Material) as a left join
+(select * from MType) as b on a.Material_group=b.Material_group
+) as b on a.POVendor=b.POVendor and a.IECPN=b.PF
+
+) as a  where Not ShortagePN='' group by POVendor,ShortagePN,PIC,Material_descript 
+) as a left join
+(select distinct * from #MV ) as b on replace(a.ShortagePN,'*','')=b.Material
+
+) as a left join
+(select distinct POVendor,Material,Buyer from OPS_Mat_SA) as b on a.POVendor=b.POVendor and replace(a.ShortagePN,'*','')=b.Material--a.ShortagePN=b.Material--
+
+---(2019/05/09) Change Date from 10 to 14
+---Update EstETADate
+update #ShortageDetail set EstETADate=isnull((select Dt from #DD where iid=(select iid from #DD where Dt=NeedShipDate)-14),'')
+
+---Get Previous MaterialETA & Remark
+update #ShortageDetail set NewShortage=RealOpenQty-ShortageQty,MaterialETA=isnull(b.MaterialETA,''),Remark=isnull(b.Remark,'') from #ShortageDetail a,
+(
+select distinct * from Ivan_ShortageMaterialUpdate where convert(char(10),Cdt,111)=convert(char(10),getdate(),111) and Customer='HP'
+) as b where a.POVendor=b.POVendor and a.ShortagePN=b.Material 
+
+
+update #ShortageDetail set NewShortage='New' where NewShortage=''
+
+update #ShortageDetail set RemainedStock=isnull(b.Qty,0) from #ShortageDetail a,
+(
+select POVendor,MS=case when MS is null then MatNo else MS end,Qty=sum(Qty) from(
+
+select distinct a.POVendor,MS,MatNo,Qty from (
+select * from OPS_INV where INVDate=convert(char(10),getdate(),111)) as a left join 
+(select distinct POVendor,MS,ShortagePN from OPS_Alternative) as b 
+on a.MatNo=b.ShortagePN 
+
+) as a 
+group by POVendor,case when MS is null then MatNo else MS end
+
+) as b where a.POVendor=b.POVendor and a.ShortagePN=b.MS
+
+
+---(2016/04/19) solve Vivian's problem ,FA shows shortage but not in OPO ex : 6070B0661002 .....
+---(2013/01/23) solve the Bonnie problem....
+update #ShortageDetail set RestNeedQty=b.RestNeedQty from #ShortageDetail a,
+(
+select ShortagePN,RestNeedQty=sum(RestNeedQty) from (
+select distinct iid,POVendor,ShortagePN,RestNeedQty=RestNeedQty*Qty from
+(select iid,IECPN,RestNeedQty=OpenQty-CurrentDone/*-FutureDone*/ from #OPODetail where OpenQty-CurrentDone/*-FutureDone*/>0) as a inner join
+(select * from OPS_AAResult) as b on a.IECPN=b.PF
+) as a group by ShortagePN
+) as b where a.ShortagePN=b.ShortagePN
+
+
+--select * from #ShortageDetail where RemainedStock>RestNeedQty
+delete from #ShortageDetail where RemainedStock>RestNeedQty
+
+select POVendor,ShortagePN,PIC,IECPN,PO_Type,MP into #tmpPIC from 
+(
+select distinct a.*,b.iid from
+(select distinct POVendor,ShortagePN,PIC from #ShortageDetail) as a left join
+(select * from #OM) as b on a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+) as a inner join
+(select iid,IECPN,PO_Type,MP from #OPODetail) as b on a.iid=b.iid
+
+
+---(2021/11/18) Remove DT PIC
+/*
+update #ShortageDetail set PIC='Lori' from #ShortageDetail a,(
+select distinct POVendor,ShortagePN from #tmpPIC where left(IECPN,2) in ('SF','JF') and substring(IECPN,8,2)='BD') as b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+
+update #ShortageDetail set PIC='Lori' from #ShortageDetail a,(
+select distinct POVendor,ShortagePN from #tmpPIC where left(IECPN,2)='PF' and substring(IECPN,8,2)='RJ') as b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+*/
+
+update #ShortageDetail set PIC='Iris' from #ShortageDetail a,(
+select distinct POVendor,ShortagePN from #tmpPIC where PO_Type in ('NPI','NPI*') and ShortagePN like '13%') as b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+
+update #ShortageDetail set PIC='Lori' from #ShortageDetail a,(
+select distinct POVendor,ShortagePN from #tmpPIC where ShortagePN like '13%' and MP='Y') as b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+
+
+----------Get Shortage Material Model---------------
+/*
+drop table #MDCount
+drop table #SMCount
+drop table #MDCountTmp
+drop table #MP_POType
+*/
+create table #MDCount(PN varchar(20),Model varchar(20))
+----(2016/04/13) add MP & NPI .
+create table #SMCount(iid int identity(1,1),PN varchar(20),MD varchar(1000),MP varchar(20),NPI varchar(20))
+create table #MDCountTmp(mid int identity(1,1),MD varchar(20))
+
+insert #MDCount
+select distinct ShortagePN,Material_group from
+(
+/*
+select distinct a.ShortagePN,b.Material_group from OPS_AAResult a,t_download_matmas_CP81DW b where a.PF=b.Material and a.ShortagePN in (select distinct ShortagePN from #ShortageDetail)
+union
+*/
+select distinct a.ShortagePN,b.Material_group from #AAResult a,t_download_matmas_CP60DW b where a.PF=b.Material and a.ShortagePN in (select distinct ShortagePN from #ShortageDetail)
+) as a 
+
+insert #SMCount
+      select distinct PN,'','','' from #MDCount
+
+declare @MDCmin int
+declare @MDCmax int
+declare @MDtmpmin int
+declare @MDtmpmax int
+
+select @MDCmin=min(iid) from #SMCount
+select @MDCmax=max(iid) from #SMCount
+
+while @MDCmin<=@MDCmax
+begin
+   insert #MDCountTmp
+        select Model from #MDCount where PN=(select PN from #SMCount where iid=@MDCmin)
+   
+   select @MDtmpmin=min(mid) from #MDCountTmp
+   select @MDtmpmax=max(mid) from #MDCountTmp
+   
+   while @MDtmpmin<=@MDtmpmax
+   begin
+       update #SMCount set MD=rtrim(MD)+(select MD from #MDCountTmp where mid=@MDtmpmin)+'/ ' where iid=@MDCmin
+       select @MDtmpmin=@MDtmpmin+1
+   end
+   select  @MDCmin=@MDCmin+1
+   truncate table #MDCountTmp
+end
+
+---select * from #SMCount
+
+select distinct PN,MP,PO_Type into #MP_POType from
+(select a.PN,b.iid from #SMCount a,OPS_OM b where  Customer='HP' and ReportDate=convert(char(10),getdate(),111) and a.PN=b.ShortagePN ) as a left join
+(select iid,MP,PO_Type from OPS_OPO where Customer='HP' and ReportDate=convert(char(10),getdate(),111)) as b on a.iid=b.iid
+
+update #SMCount set NPI='Y' from #SMCount a,#MP_POType b where a.PN=b.PN and b.PO_Type in ('NPI','NPI*')
+update #SMCount set MP='Y' from #SMCount a,#MP_POType b where a.PN=b.PN and b.MP='Y'
+
+-----(2016/04/22) add '*' to identify the SPM's responesibility
+update #SMCount set NPI='Y*' from #SMCount a,#MP_POType b where a.PN=b.PN and b.PO_Type='NPI*'
+
+
+--------------------------------------------------
+--drop table #ShortageDetail_total
+select POVendor,ShortagePN,PIC,Material_descript,GattingExisted=' ',GattingNeed=0,SAPRawMaterialOPO=0,POBalance=0,WholeBuyExisted='                                                                                                                                                                    '
+,SODate,NeedShipDate,LatestSODate,LatestNeedShipDate,Site,Item,RealOpenQty,RemainedStock,MTStock=0,MStock=0,Buyer,Vendor,
+EstETADate,NewShortage,MaterialETA,Remark,b.MD,b.MP,b.NPI into #ShortageDetail_total from
+(select POVendor,ShortagePN,PIC,Material_descript,SODate,NeedShipDate,LatestSODate,LatestNeedShipDate,Site,Item,RealOpenQty,RemainedStock,Buyer,Vendor,
+EstETADate,NewShortage,MaterialETA,Remark from #ShortageDetail) as a left join
+(select * from #SMCount) as b
+on a.ShortagePN=b.PN order by PIC,NeedShipDate,RealOpenQty desc
+
+
+update #ShortageDetail_total set GattingExisted='Y',GattingNeed=abs(convert(int,b.FCSTBalance)) from #ShortageDetail_total a,#Gating b 
+where replace(a.ShortagePN,' ','')=replace(b.Material,' ','') and a.POVendor=b.POVendor and b.FCSTBalance<0 and a.ShortagePN like '6037%*'
+
+update #ShortageDetail_total set GattingExisted='Y',GattingNeed=abs(convert(int,b.FCSTBalance)) from #ShortageDetail_total a,#Gating b 
+where left(a.ShortagePN,12)=left(b.Material,12) and a.POVendor=b.POVendor and b.FCSTBalance<0 and not a.ShortagePN like '6037%*'
+
+
+insert #ShortageDetail_total 
+      select distinct POVendor,Material,'','','Y',GattingNeed,'','','','2099/01/01','2099/01/01','2099/01/01','2099/01/01','0','0','0','0','0','0',Buyer,'','2099/01/01','','','','','','' from (
+      select * from (select POVendor,Material,Buyer,GattingNeed=abs(FCSTBalance) from #Gating where FCSTBalance<0) as a left join
+      (select distinct PO=POVendor,ShortagePN from #ShortageDetail_total) as b on left(a.Material,12)=left(b.ShortagePN,12) and a.POVendor=b.PO
+      ) as a where ShortagePN is null 
+      
+--select * from #ShortageDetail_total where ShortagePN like '6070B0438501%'
+
+
+update #ShortageDetail_total set Buyer=b.Buyer from #ShortageDetail_total a,BuyerCode b where a.Buyer=b.BuyerCode
+update #ShortageDetail_total set Vendor=b.Vendor from #ShortageDetail_total a,#MV b where a.ShortagePN=b.Material and a.Vendor=''
+/*
+update #ShortageDetail_total set Material_descript='( '+isnull(b.Material_group,'')+' )    '+isnull(b.Material_descript,'') from #ShortageDetail_total a,t_download_matmas_CP81DW b 
+where replace(a.ShortagePN,'*','')=b.Material and a.Material_descript=''
+*/
+update #ShortageDetail_total set Material_descript='( '+isnull(b.Material_group,'')+' )    '+isnull(b.Material_descript,'') from #ShortageDetail_total a,t_download_matmas_CP60DW b 
+where replace(a.ShortagePN,'*','')=b.Material and a.Material_descript=''
+
+
+----Add Inventory for Gating Items .
+update #ShortageDetail_total set RemainedStock=b.Qty from #ShortageDetail_total a,OPS_INV b where a.POVendor=b.POVendor 
+and a.ShortagePN=b.MatNo and b.MaterialProperty='FG' and a.SODate='2099/01/01'
+
+
+/*
+update #ShortageDetail_total set PIC=c.PIC from #ShortageDetail_total a,t_download_matmas_CP81DW b,MType c where replace(a.ShortagePN,'*','')=b.Material and b.Material_group=c.Material_group
+and a.PIC=''
+*/
+
+update #ShortageDetail_total set PIC=c.PIC from #ShortageDetail_total a,t_download_matmas_CP60DW b,MType c where replace(a.ShortagePN,'*','')=b.Material and b.Material_group=c.Material_group
+and a.PIC=''
+
+
+update #ShortageDetail_total set PIC='Iris' where ShortagePN like '13%' and PIC=''
+update #ShortageDetail_total set PIC='David' where ShortagePN like '15%' and PIC=''
+update #ShortageDetail_total set PIC='Sammi' where ShortagePN like '172%' and PIC=''
+
+
+-------------------=====================================================================================
+----Remove the item which Inventory is enough .
+--select * from #ShortageDetail_total where SODate='2099/01/01' and RemainedStock>GattingNeed
+delete from #ShortageDetail_total where SODate='2099/01/01' and RemainedStock>GattingNeed
+
+----(2013/06/03) get PO Balance
+update #ShortageDetail_total set POBalance=b.POBalance from #ShortageDetail_total a, 
+(select POVendor,Material,POBalance from #Gating where FCSTBalance<0) as b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.Material
+
+----(2020/11/30 Remove the substitution PN)
+----(2013/07/18) get PO Balance by 
+--drop table #SAPPO
+select Plnt=case when Plnt='CP81' then 'IES' when Plnt='CP60' then 'ICC' else '' end ,Material,Open_Qty=convert(int,sum(convert(float,replace(Open_Qty,' ','')))) into #SAPPO from (
+--select PO_Number,Item,Plnt,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),PO_Qty,Open_Qty from ipc_t_download_nb_po where S_loc='SW03' 
+--union
+select PO_Number,Item,Plnt,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),PO_Qty,Open_Qty from icc_t_download_nb_po where S_loc='SW04'
+) as a group by Plnt,Material
+
+--Get K/B PO Balance
+insert #SAPPO
+select Plnt,MS=rtrim(MS)+'*',Open_Qty=sum(Open_Qty) from (
+select distinct a.Plnt,b.MS,b.Material,a.Open_Qty from
+(select * from #SAPPO where Material like '6037%') as a left join
+(
+select a.* from KBAlternative a,(
+select * from (select PF,MS,qty=count(*) from KBAlternative group by PF,MS) as b where qty>1) as b where a.PF=b.PF and a.MS=b.MS
+) as b on a.Material=b.Material) as a where not MS is null group by Plnt,MS
+
+delete from #SAPPO where Material in (select distinct Material from KBAlternative a,(
+select * from (select PF,MS,qty=count(*) from KBAlternative group by PF,MS) as b where qty>1) as b where a.PF=b.PF and a.MS=b.MS)
+
+
+update #ShortageDetail_total set SAPRawMaterialOPO=b.Open_Qty from #ShortageDetail_total a,#SAPPO b where a.POVendor=b.Plnt and a.ShortagePN=b.Material
+
+--select * from #SAPPO where Material='6070B0372402'
+--select top 10 * from #ShortageDetail_total where ShortagePN='6070B0372402'
+update #ShortageDetail_total set POBalance=b.Open_Qty-GattingNeed from #ShortageDetail_total a,#SAPPO b where a.POVendor=b.Plnt and a.ShortagePN=b.Material
+
+--select * from #ShortageDetail_total a,#SAPPO b where a.POVendor=b.Plnt and a.ShortagePN=b.Material
+
+
+----Remove Packing Material
+delete from #ShortageDetail_total where ShortagePN like '606%' and SODate='2099/01/01'
+delete from #ShortageDetail_total where ShortagePN like '6Z%' and SODate='2099/01/01'
+delete from #ShortageDetail_total where ShortagePN like '606%' and SODate='2099/01/01'
+
+----Remove samll EE Material
+delete from #ShortageDetail_total where left(ShortagePN,4) in ('6010','6011','6013','6014','6015','6016','6018','6071') and SODate='2099/01/01'
+
+----(2016/11/28) Remove DPK BOM
+----delete from #ShortageDetail_total where left(ShortagePN,2)='12'
+
+----------------------Get Whole Buy
+/*
+drop table #WBinit
+drop table #WBresult
+drop table #WBmid
+*/
+
+create table #WBinit(Material varchar(20),SCD varchar(50))
+create table #WBresult(iid int identity(1,1),Material varchar(20),SCD varchar(1000))
+create table #WBmid(mid int identity(1,1),Material varchar(20),SCD varchar(50))
+
+insert #WBinit
+select left(Material,12),
+SCD=convert(char(8),ServiceConfirmDate,112)+'-'+
+case when PurchaseType='Whole buy' then 'W' 
+when PurchaseType='MOQ' then 'M'
+when PurchaseType='LTB' then 'L'
+else '?' end+'-'+
+convert(varchar(10),ServiceDemandQty)+'-'+
+convert(varchar(10),BalanceQty)+'-'+
++case when ItemStatus='Open' then 'O'
+when ItemStatus='Closed' then 'C'
+when ItemStatus='Pending' then 'P'
+else '?' end from WholeBuy order by SCD
+
+
+
+insert #WBresult
+    select distinct Material,'' from #WBinit
+
+declare @WBi int
+declare @WBj int
+declare @WBa int
+declare @WBb int
+
+select @WBi=min(iid) from #WBresult
+select @WBj=max(iid) from #WBresult
+
+while @WBi<=@WBj
+begin
+     insert #WBmid
+         select Material,SCD from #WBinit where Material=(select Material from #WBresult where iid=@WBi) order by SCD
+         select @WBa=min(mid) from #WBmid
+         select @WBb=max(mid) from #WBmid 
+         while @WBa<=@WBb 
+         begin
+           update #WBresult set SCD=rtrim(a.SCD)+b.SCD+' /' from #WBresult a,(select * from #WBmid where mid=@WBa) as b where a.Material=b.Material 
+           select @WBa=@WBa+1
+         end
+     truncate table #WBmid
+     select @WBi=@WBi+1
+end
+
+-----------------------------------
+update #ShortageDetail_total set WholeBuyExisted=b.SCD from #ShortageDetail_total a,#WBresult b where a.ShortagePN=b.Material
+
+--select distinct FF=left(Material_descript,charindex(')',Material_descript)) from #ShortageDetail_total order by FF
+--select * from #ShortageDetail_total order by PIC,NeedShipDate,GattingNeed desc where Material_descript like '%LCM%' not ShortagePN like '601%'
+
+-----Updated Material_ETA for Gating items .
+update #ShortageDetail_total set NewShortage=case when isnull(b.ShortageQty,0)=0 then 'New' else convert(varchar(10),RealOpenQty-isnull(b.ShortageQty,0)) end 
+,MaterialETA=isnull(b.MaterialETA,''),Remark=isnull(b.Remark,'') from #ShortageDetail_total a,
+(select distinct * from Ivan_ShortageMaterialUpdate where convert(char(10),Cdt,111)=convert(char(10),getdate(),111) and Customer='HP') as b
+where a.POVendor=b.POVendor and a.ShortagePN=b.Material and a.MaterialETA=''
+
+update #ShortageDetail_total set NewShortage='New' where NewShortage=''
+
+
+update #ShortageDetail_total set Remark='(ETA Delay : '+convert(varchar(5),b.ETADiff)+' )'+rtrim(Remark) from #ShortageDetail_total a,Ivan_CurrentINV b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.MatNo and ETADiff<0 and Customer='HP'
+
+
+
+update #ShortageDetail_total set Remark='(ETA Improve : '+convert(varchar(5),b.ETADiff)+' )'+rtrim(Remark) from #ShortageDetail_total a,Ivan_CurrentINV b 
+where a.POVendor=b.POVendor and a.ShortagePN=b.MatNo and ETADiff>0 and not ETADiff=9999 and Customer='HP'
+
+
+---(2013/10/07 Get Manufacture Inventory)
+/*
+update #ShortageDetail_total set MTStock=b.Qty from #ShortageDetail_total a,Ivan_Current_M_INV b where a.POVendor=b.POVendor 
+and a.ShortagePN=b.MatNo and b.InventoryType='MT-WH' and b.MP='M_FG' and Customer='HP'
+
+update #ShortageDetail_total set MStock=b.Qty from #ShortageDetail_total a,Ivan_Current_M_INV b where a.POVendor=b.POVendor 
+and a.ShortagePN=b.MatNo and b.InventoryType='M-WH' and b.MP='M_FG' and Customer='HP'
+*/
+---(2015/05/08 Add Alternative check )
+update #ShortageDetail_total set MTStock=b.Qty from #ShortageDetail_total a,(
+select POVendor,ShortagePN,Qty=sum(Qty) from (
+select a.*,b.Qty from 
+(
+select a.POVendor,ShortagePN,SP=case when SP is null then ShortagePN else SP end from (
+select a.POVendor,a.ShortagePN,SP=b.ShortagePN from 
+(select distinct POVendor,ShortagePN from #ShortageDetail_total) as a left join
+(select distinct MS,ShortagePN from #Alternative) as b on a.ShortagePN=b.MS
+) as a
+) as a left join
+(select * from Ivan_Current_M_INV where MP='MT-WH' and Customer='HP') as b on a.SP=b.MatNo and a.POVendor=b.POVendor
+) as a where not Qty is null group by POVendor,ShortagePN
+) as b where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+
+
+update #ShortageDetail_total set MStock=b.Qty from #ShortageDetail_total a,(
+select POVendor,ShortagePN,Qty=sum(Qty) from (
+select a.*,b.Qty from 
+(
+select a.POVendor,ShortagePN,SP=case when SP is null then ShortagePN else SP end from (
+select a.POVendor,a.ShortagePN,SP=b.ShortagePN from 
+(select distinct POVendor,ShortagePN from #ShortageDetail_total) as a left join
+(select distinct MS,ShortagePN from #Alternative) as b on a.ShortagePN=b.MS
+) as a
+) as a left join
+(select * from Ivan_Current_M_INV where MP='M_FG' and Customer='HP') as b on a.SP=b.MatNo and a.POVendor=b.POVendor
+) as a where not Qty is null group by POVendor,ShortagePN
+) as b where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
+
+/*
+-----(2024/10/24) Add SW01 015 Stock to MTStock-----------------------------------------------------
+--drop #ww
+-----Get Alternative 
+select MS,MatNo,Qty into #ww from
+(select * from WIP_WHALL_TD where SLoc='WA1' and SType='015') a,
+(select MS,ShortagePN from #Alternative) as b where a.MatNo=b.ShortagePN
+
+
+update #ShortageDetail_total set MTStock=MTStock+b.Qty from #ShortageDetail_total a,
+(
+select MatNo=MS,Qty=sum(Qty) from #ww as a group by MS
+union
+select MatNo,Qty from WIP_WHALL_TD where SLoc='WA1' and SType in ('005','015') and not MatNo in (select MatNo from #ww)
+) as b where a.ShortagePN=b.MatNo
+----------------------------------------------------------------------------------------------------------------------------------
+*/
+
+-----(2017/08/01) add No MP in Remark
+-----(2016/05/27) add No MP in Remark
+update #ShortageDetail_total set Remark=replace(Remark,'<<No MP>>','')
+
+update #ShortageDetail_total set Remark='<<No MP>>'+rtrim(Remark) where ShortagePN in 
+(
+---=(2021/6/16 remove the item as long as the item ever MP...)
+--select distinct ShortagePN from #OM where Remark like '<<No MP>>%'
+select distinct ShortagePN from #OM where Remark like '<<No MP>>%' and not ShortagePN in 
+(select distinct ShortagePN from #OM where  not Remark like '<<No MP>>%')
+/*
+(
+select * from 
+(select distinct IECPN,ShortagePN from #OM) as a left join
+(select * from Maggie_FRUnoMP) as b on a.IECPN=b.FRUPN
+) as a where not FRUPN is null
+*/
+)
+
+
+
+
+----(2018/07/04) insert real FA shortage data to ShortageQty
+
+update #ShortageDetail_total set RealOpenQty=b.Qty from #ShortageDetail_total a,
+(
+select MS,Qty=sum(total_qty) from (
+select Material,total_qty,MS=case when MS is null then Material else MS end,ShortagePN from 
+(
+----(2018/10/22) remove the board level material
+select distinct Material=left(part_no,12),total_qty from icc_r_shortage_data where len(part_no)>12 
+and not where_use like '%111%'
+) as a left join
+(select distinct MS,ShortagePN from #Alternative) as b on a.Material=b.ShortagePN
+) as a /*where MS='6037B0086012*'*/ group by MS
+) as b where a.ShortagePN=b.MS
+
+update #ShortageDetail_total set PIC='Sammi' where ShortagePN like '172%' 
+
+insert OPS_Material
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),*  from #ShortageDetail_total order by PIC,NeedShipDate,RealOpenQty,GattingNeed desc
+
+
+
+-----------Summary (By PIC)-----------------------------------------------------------------
+insert OPS_MSummaryPIC
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),PIC=isnull(PIC,''),Item=sum(Item),Qty=sum(Qty),NoETAItem=sum(NoETAItem),NoETAQty=sum(NoETAQty) from
+(
+select PIC,Item=count(*),Qty=0,NoETAItem=0,NoETAQty=0 from #ShortageDetail_total group by PIC
+union
+select PIC,0,sum(RealOpenQty),0,0 from #ShortageDetail_total group by PIC
+union
+select PIC,0,0,count(*),0 from #ShortageDetail_total where MaterialETA='' group by PIC
+union
+select PIC,0,0,0,sum(RealOpenQty) from #ShortageDetail_total where MaterialETA='' group by PIC
+) as a group by PIC order by Item desc
+
+--Summary (By Type)
+insert OPS_MSummaryType
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),MType,PIC=isnull(PIC,''),Item=sum(Item),Qty=sum(Qty),NoETAItem=sum(NoETAItem),NoETAQty=sum(NoETAQty) from
+(
+select MType,PIC,Item=sum(Item),Qty=0,NoETAItem=0,NoETAQty=0 from(
+select MType=case when replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ','') like 'F%' then 'SA' else
+replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ','') 
+end,PIC
+ ,Item=count(*) from #ShortageDetail_total 
+group by replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ',''),PIC
+) as a group by MType,PIC
+union
+select MType,PIC,0,Qty=sum(Qty),0,0 from(
+select MType=case when replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ','') like 'F%' then 'SA' else
+replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ','') 
+end,PIC
+ ,Qty=sum(RealOpenQty) from #ShortageDetail_total 
+group by replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ',''),PIC
+) as a group by MType,PIC
+union
+select MType,PIC,0,0,Item=sum(Item),0 from(
+select MType=case when replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ','') like 'F%' then 'SA' else
+replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ','') 
+end,PIC
+ ,Item=count(*) from #ShortageDetail_total where MaterialETA='' 
+group by replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ',''),PIC
+) as a group by MType,PIC
+union
+select MType,PIC,0,0,0,NoETAQty=sum(NoETAQty) from(
+select MType=case when replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ','') like 'F%' then 'SA' else
+replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ','') 
+end,PIC
+ ,NoETAQty=sum(RealOpenQty) from #ShortageDetail_total where MaterialETA='' 
+group by replace(replace(left(Material_descript,charindex(')',Material_descript)-1),'(',''),' ',''),PIC
+) as a group by MType,PIC
+) as a group by MType,PIC order by Item desc
+
+
+---Alternative
+insert OPS_Alt
+select distinct Customer='HP',ReportDate=convert(char(10),getdate(),111),MS,ShortagePN,Priority,Usage,Item,RefPN  from OPS_Alternative order by MS,RefPN,Item
+
+---Shortage material Inventory consumer status
+
+insert OPS_Inventory
+select distinct Customer='HP',ReportDate=convert(char(10),getdate(),111),a.POVendor,a.MaterialProperty,a.MatNo,Material_descript='( '+isnull(b.Material_group,'')+' )    '+isnull(b.Material_descript,''),
+RemainedQty=Qty,StockExistedDate=INVDate,ConsumerStatus=a.Remark from OPS_INV a,t_download_matmas_CP81DW b where left(a.MatNo,12)=b.Material and POVendor='IES'
+
+
+insert OPS_Inventory
+select distinct Customer='HP',ReportDate=convert(char(10),getdate(),111),a.POVendor,a.MaterialProperty,a.MatNo,Material_descript='( '+isnull(b.Material_group,'')+' )    '+isnull(b.Material_descript,''),
+RemainedQty=Qty,StockExistedDate=INVDate,ConsumerStatus=a.Remark from OPS_INV a,t_download_matmas_CP60DW b where left(a.MatNo,12)=b.Material and POVendor='ICC'
+
+
+---(2019/02/14) Remove SW27 
+---(2013/07/01) Raw Material OPOs 
+insert OPS_RawOPO
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),a.*,MaterialETA=isnull(MaterialETA,''),Remark=isnull(Remark,'') from
+(
+select * from (
+select distinct PO_Number,Item,Plnt,S_loc,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),
+PO_Qty=convert(float,replace(PO_Qty,' ','')),
+Open_Qty=convert(float,replace(Open_Qty,' ','')) 
+from ipc_t_download_nb_po where Plnt='CP81' and S_loc='SW03' 
+union
+select distinct PO_Number,Item,Plnt,S_loc,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),
+PO_Qty=convert(float,replace(PO_Qty,' ','')),
+Open_Qty=convert(float,replace(Open_Qty,' ','')) 
+from icc_t_download_nb_po where Plnt='CP60' and S_loc in ('SW04'/*,'SW27'*/,'MW27','MW12')
+) as a 
+) as a left join
+(select distinct POVendor=case when POVendor='IES' then 'CP81' when POVendor='ICC' then 'CP60' else '' end,Material,MaterialETA,Remark 
+from dbo.Ivan_ShortageMaterialUpdate where convert(char(10),Cdt,111)=convert(char(10),getdate(),111) and Customer='HP'
+) as b on a.Plnt=b.POVendor and a.Material=b.Material order by Plnt,convert(datetime,Create_Dt+' 00:00')
+
+
+update OPS_RawOPO set Vendor=b.Vendor_Name2 from OPS_RawOPO a,t_download_supplier_master b where a.Vendor=b.Vendor_Code and not b.Vendor_Name2 is null 
+and Customer='HP' and ReportDate=convert(char(10),getdate(),111)
+
+---------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------
+-------New------Summary OPO Status
+------Normal OTD
+insert OPS_OTDFailD
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOType='Normal OTD',* from (
+select a.*,b.ShortagePN,b.Material_descript,b.MaterialETA,b.Remark from
+(select IECPN,ProductFamily,NeedShipDate=min(NeedShipDate),OpenQty=sum(OpenQty) from #OPODetail where OPOR like '(OTD Fail%' and not PO_Type in ('NPI','NPI*') group by IECPN,ProductFamily) as a left join
+(select distinct IECPN,ShortagePN,Material_descript,MaterialETA,Remark from #OM where NeedQty>CurrentStock) as b on a.IECPN=b.IECPN
+) as a where not ShortagePN is null order by OpenQty desc,IECPN
+
+---NPI OTD 
+insert OPS_OTDFailD
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOType='NPI OTD',* from (
+select a.*,b.ShortagePN,b.Material_descript,b.MaterialETA,b.Remark from
+(select IECPN,ProductFamily,NeedShipDate=min(NeedShipDate),OpenQty=sum(OpenQty) from #OPODetail where OPOR like '(OTD Fail%' and PO_Type in ('NPI','NPI*') group by IECPN,ProductFamily) as a left join
+(select distinct IECPN,ShortagePN,Material_descript,MaterialETA,Remark from #OM where NeedQty>CurrentStock) as b on a.IECPN=b.IECPN
+) as a where not ShortagePN is null order by OpenQty desc,IECPN
+
+---Normal Potential
+insert OPS_OTDFailD
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOType='Normal Potential',* from (
+select a.*,b.ShortagePN,b.Material_descript,b.MaterialETA,b.Remark from
+(select IECPN,ProductFamily,NeedShipDate=min(NeedShipDate),OpenQty=sum(OpenQty) from #OPODetail where OPOR like '%Potential%' and not PO_Type in ('NPI','NPI*') group by IECPN,ProductFamily) as a left join
+(select distinct IECPN,ShortagePN,Material_descript,MaterialETA,Remark from #OM where NeedQty>CurrentStock) as b on a.IECPN=b.IECPN
+) as a where not ShortagePN is null order by OpenQty desc,IECPN
+
+----NPI Potential
+insert OPS_OTDFailD
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOType='NPI Potential',* from (
+select a.*,b.ShortagePN,b.Material_descript,b.MaterialETA,b.Remark from
+(select IECPN,ProductFamily,NeedShipDate=min(NeedShipDate),OpenQty=sum(OpenQty) from #OPODetail where OPOR like '%Potential%' and PO_Type in ('NPI','NPI*') group by IECPN,ProductFamily) as a left join
+(select distinct IECPN,ShortagePN,Material_descript,MaterialETA,Remark from #OM where NeedQty>CurrentStock) as b on a.IECPN=b.IECPN
+) as a where not ShortagePN is null order by OpenQty desc,IECPN
+
+
+
+---------------------------Summary
+---Summary Normal OTD 
+insert OPS_OTDFailS
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOType='Normal OTD',MType=left(Material_descript,charindex(')',Material_descript)),PType=count(distinct ShortagePN),ItemQty=count(POItem),PTypeQty=sum(OpenQty) from (
+select * from (
+select a.*,b.ShortagePN,b.Material_descript,b.MaterialETA,b.Remark from
+(select IECPN,ProductFamily,PO,POItem,NeedShipDate=min(NeedShipDate),OpenQty=sum(OpenQty) from #OPODetail where OPOR like '(OTD Fail%' 
+and not PO_Type in ('NPI','NPI*') group by IECPN,ProductFamily,PO,POItem) as a left join
+(select distinct IECPN,ShortagePN,Material_descript,MaterialETA,Remark from #OM where NeedQty>CurrentStock) as b on a.IECPN=b.IECPN
+) as a where not ShortagePN is null
+) as a where not Material_descript is null group by left(Material_descript,charindex(')',Material_descript)) order by ItemQty desc
+
+---Summary NPI OTD
+insert OPS_OTDFailS
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOType='NPI OTD',MType=left(Material_descript,charindex(')',Material_descript)),PType=count(distinct ShortagePN),ItemQty=count(POItem),PTypeQty=sum(OpenQty) from (
+select * from (
+select a.*,b.ShortagePN,b.Material_descript,b.MaterialETA,b.Remark from
+(select IECPN,ProductFamily,PO,POItem,NeedShipDate=min(NeedShipDate),OpenQty=sum(OpenQty) from #OPODetail where 
+OPOR like '(OTD Fail%' and PO_Type in ('NPI','NPI*') group by IECPN,ProductFamily,PO,POItem) as a left join
+(select distinct IECPN,ShortagePN,Material_descript,MaterialETA,Remark from #OM where NeedQty>CurrentStock) as b on a.IECPN=b.IECPN
+) as a where not ShortagePN is null
+) as a where not Material_descript is null group by left(Material_descript,charindex(')',Material_descript)) order by count(*) desc
+
+---Summary
+insert OPS_OTDFailS
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOType='Normal Potential',MType=left(Material_descript,charindex(')',Material_descript)),PType=count(distinct ShortagePN),ItemQty=count(POItem),PTypeQty=sum(OpenQty) from (
+select * from (
+select a.*,b.ShortagePN,b.Material_descript,b.MaterialETA,b.Remark from
+(select IECPN,ProductFamily,PO,POItem,NeedShipDate=min(NeedShipDate),OpenQty=sum(OpenQty) from #OPODetail 
+where OPOR like '%Potential%' and not PO_Type in ('NPI','NPI*') group by IECPN,ProductFamily,PO,POItem) as a left join
+(select distinct IECPN,ShortagePN,Material_descript,MaterialETA,Remark from #OM where NeedQty>CurrentStock) as b on a.IECPN=b.IECPN
+) as a where not ShortagePN is null
+) as a where not Material_descript is null group by left(Material_descript,charindex(')',Material_descript)) order by count(*) desc
+
+
+---Summary NPI Potential OTD
+insert OPS_OTDFailS
+select Customer='HP',ReportDate=convert(char(10),getdate(),111),OPOType='NPI Potential',MType=left(Material_descript,charindex(')',Material_descript)),PType=count(distinct ShortagePN),ItemQty=count(POItem),PTypeQty=sum(OpenQty) from (
+select * from (
+select a.*,b.ShortagePN,b.Material_descript,b.MaterialETA,b.Remark from
+(select IECPN,ProductFamily,PO,POItem,NeedShipDate=min(NeedShipDate),OpenQty=sum(OpenQty) from #OPODetail 
+where OPOR like '%Potential%' and PO_Type in ('NPI','NPI*') group by IECPN,ProductFamily,PO,POItem) as a left join
+(select distinct IECPN,ShortagePN,Material_descript,MaterialETA,Remark from #OM where NeedQty>CurrentStock) as b on a.IECPN=b.IECPN
+) as a where not ShortagePN is null
+) as a where not Material_descript is null group by left(Material_descript,charindex(')',Material_descript)) order by count(*) desc
+
+select 'OK!!'
+return
