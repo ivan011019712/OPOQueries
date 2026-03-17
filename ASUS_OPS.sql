@@ -81,19 +81,6 @@ POReceiveDate char(10),SORequestDate char(10),CustETADate char(10),PO_Type varch
 POQty int,DNQty int,DockQty int,ShipQty int,OpenQty int,Shortage varchar(10),PIC varchar(20),MP varchar(10),Escalation varchar(20),EscalationDate varchar(20),Remark varchar(1000))
 
 insert #init_tmp_OPO
-/*
-select distinct Site,PO,SO,Item,'','',rtrim(CPQPN),IECPN,ProductFamily,'',Date850,left(SO_ReqDate,4)+'/'+substring(SO_ReqDate,5,2)+'/'+substring(SO_ReqDate,7,2),'',
-isnull(PO_Type,''),isnull(Model_Status,''),isnull(FCST_Status,''),'',TCDate='',NeedShipDate=SO_First_Date,
-POQty=convert(int,Qty850),0,0,Ship=0,OpenQty=0,'','','','','','' from Service_APD a,SiteMapping b where 
-a.Site=b.ZS92Site and b.Customer='ASUS' and not ZS92Site=''/*IES_DNPGI='0000/00/00' and*/ --and SO like '11%' --and Plant in ('CP81','CP60','TP01')
-
-------(2015/0831)¥ýµw§ì
-select distinct Site,PO,SO,Item,'','',rtrim(CPQPN),IECPN,ProductFamily,'',Date850,left(SO_ReqDate,4)+'/'+substring(SO_ReqDate,5,2)+'/'+substring(SO_ReqDate,7,2),'',
-isnull(PO_Type,''),isnull(Model_Status,''),isnull(FCST_Status,''),'',TCDate='',NeedShipDate=SO_First_Date,
-POQty=convert(int,Qty850),0,0,Ship=0,OpenQty=0,'','','','','','',9999 from Service_APD  where 
---IECPN in (select distinct Material from t_download_matmas_CP69DW where Material like 'LF%')
-Site in ('32748','15883','24625','32745','15797','135406','1032','170338','246683','209016','233465','257447','248967','245326','226139','17923','215119','165483','11149','169255')
-*/
 
 ---(2021/02/24) §ï§ìªk
 select distinct Site,PO,SO,Item,'','',rtrim(CPQPN),IECPN,ProductFamily,'',Date850,left(SO_ReqDate,4)+'/'+substring(SO_ReqDate,5,2)+'/'+substring(SO_ReqDate,7,2),'',
@@ -104,8 +91,6 @@ select distinct PO from ZM57 where Site  in ('ASUS-CSC','ASUS-FRU')
 union
 select distinct PO from Service_APD  where 
 Site in (select distinct Site from ASUSSite where Loc='ICC')
---('32748','15883','24625','32745','15797','135406','1032','170338','246683','209016','233465','257447','248967',
---'245326','226139','17923','215119','165483','11149','169255','281887','234950','167200')
 ) as a 
 ) 
 
