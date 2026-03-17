@@ -86,55 +86,6 @@ isnull(Order_Reason,''),isnull(Model_Status,''),isnull(FCST_Status,''),'',TCDate
 POQty=convert(int,Qty850),0,0,Ship=0,OpenQty=0,'','','','','','' from Service_APD a,SiteMapping b where 
 a.Site=b.ZS92Site and b.Customer='DYNABOOK' and not ZS92Site=''/*IES_DNPGI='0000/00/00' and*/ and (SO like '11%' or SO like '2%' or SO like '12%') --and Plant in ('CP81','CP60','TP01')
 and not IECPN like 'TF%'
-/*
-----(2015/11/20) temperary --add TISH .
-insert #init_tmp_OPO
-select distinct Site='TSB-FJAPAN',PO,SO,Item,'','',rtrim(CPQPN),IECPN,ProductFamily,'',Date850,SO_First_Date,'',
-isnull(Order_Reason,''),isnull(Model_Status,''),isnull(FCST_Status,''),'',TCDate='',NeedShipDate='',
-POQty=convert(int,Qty850),0,0,Ship=0,OpenQty=0,'','','','','','' from Service_APD where Site='' and IECPN like 'LF%'
-
-----(2017/09/05) temperary --add TSBFRU-IPC .
-insert #init_tmp_OPO
-select distinct Site,PO,SO,Item,SO,Item,rtrim(CPQPN),IECPN,ProductFamily,'ICC',Date850,SO_First_Date,'',
-isnull(Order_Reason,''),isnull(Model_Status,''),isnull(FCST_Status,''),'',TCDate='',NeedShipDate='',
-POQty=convert(int,Qty850),0,0,Ship=0,OpenQty=0,'','','','','','' from Service_APD where SO like '12%' and IECPN like 'LF%'
-
-
-insert #init_tmp_OPO
-select Site=case 
-when S_loc='RSI' then 'KOYO' 
-when S_loc='L003' then 'L003' 
-when S_loc='SEPC' then 'SEPC' end
-,'','','',PO_No,PO_Item,TSBPN,IECPN,'',TX_Plant,
-convert(char(10),convert(datetime,rtrim(PO_Date)+' 00:00:00'),111),
-convert(char(10),convert(datetime,rtrim(PO_Date)+' 00:00:00'),111),
-'',OrderReason,'','',PO_Type,
-convert(char(10),convert(datetime,rtrim(PO_Date)+' 00:00:00'),111),
-convert(char(10),convert(datetime,rtrim(PO_Date)+' 00:00:00'),111),
-convert(float,replace(PO_Qty,' ','')),0,
---convert(float,replace(DL_Qty,' ','')),
-0,convert(float,replace(GR_Qty,' ','')),convert(float,replace(PO_Qty,' ',''))-convert(float,replace(GR_Qty,' ','')),'','','','','','' from RSI_JP where convert(float,replace(PO_Qty,' ',''))-convert(float,replace(GR_Qty,' ',''))>0
-
-
-update #init_tmp_OPO set DNQty=convert(float,replace(b.DL_Qty,' ','')) from #init_tmp_OPO a,RSI_JP b where a.IECPO=b.PO_No and a.POItem=b.PO_Item and a.IECPN=b.IECPN and not DL_No='' and DL_Date='00/00/0000'
-
-
-insert #init_tmp_OPO
-select 'IHC','','','',PO_No,PO_Item,TSBPN,IECPN,'',TX_Plant,
-convert(char(10),convert(datetime,rtrim(PO_Date)+' 00:00:00'),111),
-convert(char(10),convert(datetime,rtrim(PO_Date)+' 00:00:00'),111),
-'','','','',PO_Type,
-convert(char(10),convert(datetime,rtrim(PO_Date)+' 00:00:00'),111),
-convert(char(10),convert(datetime,rtrim(PO_Date)+' 00:00:00'),111),
-convert(float,replace(PO_Qty,' ','')),
-convert(float,replace(DL_Qty,' ','')),
-0,convert(float,replace(GR_Qty,' ','')),convert(float,replace(PO_Qty,' ',''))-convert(float,replace(GR_Qty,' ','')),'','','','','','' from ZM6XIHC_TAT where replace(Open_Qty,' ','')<>'0.000'
-*/
-
----Remove Strange Data
---delete from #init_tmp_OPO where SO='1106038112' and CPQNo='V000312770' and POReceiveDate='2014/11/15'   
---delete from #init_tmp_OPO where SO='1106194235' and CPQNo='V000272500' and POReceiveDate='2014/11/27'
---delete from #init_tmp_OPO where SO='1106255210' and CPQNo='V000321070' and POReceiveDate='2014/12/22'
 
 
 --update DN Qty
