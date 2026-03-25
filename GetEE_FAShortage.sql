@@ -357,12 +357,12 @@ group by MType
 			(select * from Ivan_qi where ReportDate=convert(char(10),getdate(),111) and Customer='BL') as b on  a.Material=b.ShortagePN --order by PIC,Priority,eMsg
 
 			) as a left join
-
-			 (select MatNo,Qty from WIP_WHALL_TD where SLoc='WA1' and SType='015' )  as b on a.Material=b.MatNo --order by PIC,Priority,eMsg
+-----(2026/03/25) Add plant to seperate the ICC & ITH
+			 (select MatNo,Qty from WIP_WHALL_TD where SLoc='WA1' and SType='015' and Plant='CP60')  as b on a.Material=b.MatNo --order by PIC,Priority,eMsg
 
 	 		) as a left join
 
-		 (select MatNo,Qty from WIP_WHALL_TD where SLoc='WA1' and SType='005' )  as b on a.Material=b.MatNo --order by PIC,Priority,eMsg
+		 (select MatNo,Qty from WIP_WHALL_TD where SLoc='WA1' and SType='005' and Plant='CP60')  as b on a.Material=b.MatNo --order by PIC,Priority,eMsg
 
 	) as a left join
 	(
