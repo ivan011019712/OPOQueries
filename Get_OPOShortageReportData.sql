@@ -731,6 +731,10 @@ update #ShipData set PO=rtrim(a.PO)+'_BR_BO' from #ShipData a,SMSBP b where repl
 ---(2025/10/30) add EMEAKBQ
 update #ShipData set PO=rtrim(a.PO)+'_EMEAKBQ' from #ShipData a,SMSBP b where replace(a.PO,'*','')=b.PO and a.CPQNo=b.OSSPPN and b.PT='EMEAKBQ'
 
+---(2025/04/20) add AMSKBQ
+update #ShipData set PO=rtrim(a.PO)+'_AMSKBQ' from #ShipData a,SMSBP b where a.PO=b.PO and a.CPQNo=b.OSSPPN and b.PT='AMSKBQ'
+
+
 ---(2023/06/29) add SMS TR (Tariff POs) 
 update #ShipData set PO=rtrim(a.PO)+'_TR' from #ShipData a,SMSTR b where replace(a.PO,'*','')=b.PO and a.CPQNo=b.OSSPPN and b.PT='TR'
 
