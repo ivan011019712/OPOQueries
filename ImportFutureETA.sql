@@ -101,8 +101,10 @@ update Service_APD set CPQPN='90NR0LB0-R01010' where IECPN='LFO525EMB001' and CP
 update Service_APD set Site='DCE',SoldToPartner='CPQ-DCE' where SO in ('1108259298','1108251552') 
 
 ----Check Whether the Service_APD updated 
-select max(Date850) from Service_APD
-select count(*) from Service_APD
+select 'Service',max(Date850) from Service_APD
+select 'EIS',max(Date850)  from IEC1_EISDW.Service.dbo.Service_APD
+select 'Service',count(*) from Service_APD
+select 'EIS',count(*)   from IEC1_EISDW.Service.dbo.Service_APD
 
 ---Check ZSD65
 select * from ZSD65 where SO in (
