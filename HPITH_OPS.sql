@@ -2727,6 +2727,10 @@ and not where_use like '%111%'
 
 update #ShortageDetail_total set Vendor=''
 
+------(2026/04/30) µw§ï RSET PIC
+update #ShortageDetail_total set PIC='Sara' where Material_descript like '%R-SET%' and Material_descript like '%TOP%' 
+update #ShortageDetail_total set PIC='Sandy' where  Material_descript like '%R-SET%' and not Material_descript like '%TOP%' 
+
 insert OPS_Material
 select Customer='HP_ITH',ReportDate=convert(char(10),getdate(),111),*  from #ShortageDetail_total order by PIC,NeedShipDate,RealOpenQty,GattingNeed desc
 
