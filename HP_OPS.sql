@@ -2367,6 +2367,12 @@ update #OM set Remark='<<No MP>>'+rtrim(Remark) where IECPN in (select distinct 
 --update #OM set  PIC='' where ShortagePN like '2BS%'
 
 
+------(2026/05/07) µw§ï RSET PIC
+update #OM set PIC='Sara' where Material_descript like '%R-SET%' and Material_descript like '%TOP%' 
+update #OM set PIC='Sandy' where  Material_descript like '%R-SET%' and not Material_descript like '%TOP%' 
+
+
+
 insert OPS_OM
 select Customer='HP',ReportDate=convert(char(10),getdate(),111),* from #OM
 
