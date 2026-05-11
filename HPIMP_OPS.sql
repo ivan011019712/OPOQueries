@@ -2128,7 +2128,7 @@ select a.*,Qty=isnull(Qty,0) from
 (select * from Ivan_ShortageMaterialUpdate where convert(char(10),Cdt,111)=convert(char(10),getdate(),111) and Customer='HP_IMP') as b on a.POVendor=b.POVendor and a.ShortagePN=b.Material
 order by iid
 
-
+----(2026/05/11) modify NPIH M/B PIC to Lori
 ----(2018/05/27) modify MP M/B PIC to Sandy
 ----(2018/03/29) modify MP M/B PIC to Sammi
 ----(2015/02/12 modify PICs)
@@ -2136,7 +2136,7 @@ order by iid
 update #OM set PIC='Sammi' where left(IECPN,2) in ('SF','JF') and substring(IECPN,8,2)='BD'
 update #OM set PIC='David' where left(IECPN,2)='PF' and substring(IECPN,8,2)='RJ'
 
-update #OM set PIC='Iris' from #OM a,(
+update #OM set PIC='Lori' from #OM a,(
 select distinct a.POVendor,a.ShortagePN from #OM a,#OPODetail b where a.iid=b.iid and a.ShortagePN like '13%' and b.PO_Type in ('NPIH')) as b 
 where a.POVendor=b.POVendor and a.ShortagePN=b.ShortagePN
 
