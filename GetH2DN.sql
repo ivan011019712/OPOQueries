@@ -406,6 +406,9 @@ update #OPOresult set PO=rtrim(a.PO)+'_EMEAKBQ' from #OPOresult a,SMSBP b where 
 ---(2025/04/20) add AMSKBQ
 update #OPOresult set PO=rtrim(a.PO)+'_AMSKBQ' from #OPOresult a,SMSBP b where a.PO=b.PO and a.CPQNo=b.OSSPPN and b.PT='AMSKBQ'
 
+---(2025/05/18) add AMS
+update #OPOresult set PO=rtrim(a.PO)+'_AMS' from #OPOresult a,SMSBP b where a.PO=b.PO and a.CPQNo=b.OSSPPN and b.PT='AMS'
+
 ---(2025/05/04) add VDS
 update #OPOresult set PO=rtrim(a.PO)+'_VDS' from #OPOresult a,SMSBP b where a.PO=b.PO and a.CPQNo=b.OSSPPN and b.PT='VDS'
 

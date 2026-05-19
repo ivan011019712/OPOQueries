@@ -403,6 +403,12 @@ update #OPOresult set PO=rtrim(a.PO)+'_BR_BO' from #OPOresult a,SMSBP b where a.
 ---(2025/10/30) add BR_BO
 update #OPOresult set PO=rtrim(a.PO)+'_EMEAKBQ' from #OPOresult a,SMSBP b where a.PO=b.PO and a.CPQNo=b.OSSPPN and b.PT='EMEAKBQ'
 
+---(2025/04/20) add AMSKBQ
+update #OPOresult set PO=rtrim(a.PO)+'_AMSKBQ' from #OPOresult a,SMSBP b where a.PO=b.PO and a.CPQNo=b.OSSPPN and b.PT='AMSKBQ'
+
+---(2025/05/18) add AMS
+update #OPOresult set PO=rtrim(a.PO)+'_AMS' from #OPOresult a,SMSBP b where a.PO=b.PO and a.CPQNo=b.OSSPPN and b.PT='AMS'
+
 ---(2023/06/29) add SMS TR (Tariff POs) 
 update #OPOresult set PO=rtrim(a.PO)+'_TR' from #OPOresult a,SMSTR b where a.PO=b.PO and a.CPQNo=b.OSSPPN and b.PT='TR'
 
