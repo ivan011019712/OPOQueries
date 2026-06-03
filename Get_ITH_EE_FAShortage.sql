@@ -287,7 +287,7 @@ update #BL set demand_part=b.demand_part from #BL a,#dd_result b where a.Materia
 ---(2017/07/11) Combine all to NB .
 update #BL set Remark='( '+b.St+' ) '+rtrim(Remark) from #BL a,
 (select Material,St='OPO --> '+convert(varchar(20),sum(Open_Qty)) from OPS_RawOPO 
-where ReportDate=convert(char(10),getdate(),111) and Customer='HP_ITH' and WH in ('SW24','SW53','SW03') group by Material) b 
+where ReportDate=convert(char(10),getdate(),111) and Customer='HP_ITH' and WH in ('SW24','SW53','SW03','IW03') group by Material) b 
 where a.Material=b.Material and MType='NB'
 
 /*

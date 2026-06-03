@@ -2826,6 +2826,11 @@ select distinct PO_Number,Item,Plnt,S_loc,Material,Description,Vendor,Buyer,Crea
 PO_Qty=convert(float,replace(PO_Qty,' ','')),
 Open_Qty=convert(float,replace(Open_Qty,' ','')) 
 from  ith60_t_download_nb_po where Plnt='TH60' and S_loc='SW03' 
+union
+select distinct PO_Number,Item,Plnt,S_loc,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),
+PO_Qty=convert(float,replace(PO_Qty,' ','')),
+Open_Qty=convert(float,replace(Open_Qty,' ','')) 
+from  ith60_t_download_nb_po where Plnt='TH60' and S_loc='IW03' 
 ) as a left join
 (select distinct POVendor=case when POVendor='IES' then 'CP81' when POVendor='ICC' then 'CP60' when POVendor='ITH' then 'TH02' when POVendor='ITH' then 'TH60' when POVendor='ITH' then 'TH05' else '' end,Material,MaterialETA,Remark 
 from dbo.Ivan_ShortageMaterialUpdate where convert(char(10),Cdt,111)=convert(char(10),getdate(),111) and Customer='HP_ITH'
