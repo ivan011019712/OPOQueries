@@ -648,6 +648,10 @@ create table #result (POVendor varchar(20),PF varchar(20),RefPN varchar(20),Shor
 insert #result
     select distinct * from #tmp2
 
+---(2026/06/25) StrangeData
+delete from #result where PF='PFJO35YBD0A1' and ShortagePN='2BS0B0912001'
+
+
 ----(2013/02/04) Remove the 13% which RefPN exists PF & 13% both
 delete from #result where ShortagePN in (
 select distinct ShortagePN from #result where ShortagePN in (
@@ -2813,23 +2817,23 @@ insert OPS_RawOPO
 select Customer='HP_ITH',ReportDate=convert(char(10),getdate(),111),a.*,MaterialETA=isnull(MaterialETA,''),Remark=isnull(Remark,'') from
 (
 select distinct PO_Number,Item,Plnt,S_loc,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),
-PO_Qty=convert(float,replace(PO_Qty,' ','')),
-Open_Qty=convert(float,replace(Open_Qty,' ','')) 
+PO_Qty=convert(float,replace(PO_Qty,',','')),
+Open_Qty=convert(float,replace(Open_Qty,',','')) 
 from ith02_t_download_nb_po where Plnt='TH02' and S_loc='SW24' 
 union
 select distinct PO_Number,Item,Plnt,S_loc,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),
-PO_Qty=convert(float,replace(PO_Qty,' ','')),
-Open_Qty=convert(float,replace(Open_Qty,' ','')) 
+PO_Qty=convert(float,replace(PO_Qty,',','')),
+Open_Qty=convert(float,replace(Open_Qty,',','')) 
 from  ith05_t_download_nb_po where Plnt='TH05' and S_loc='SW53' 
 union
 select distinct PO_Number,Item,Plnt,S_loc,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),
-PO_Qty=convert(float,replace(PO_Qty,' ','')),
-Open_Qty=convert(float,replace(Open_Qty,' ','')) 
+PO_Qty=convert(float,replace(PO_Qty,',','')),
+Open_Qty=convert(float,replace(Open_Qty,',','')) 
 from  ith60_t_download_nb_po where Plnt='TH60' and S_loc='SW03' 
 union
 select distinct PO_Number,Item,Plnt,S_loc,Material,Description,Vendor,Buyer,Create_Dt=convert(char(10),convert(datetime,Create_Dt+' 00:00'),111),
-PO_Qty=convert(float,replace(PO_Qty,' ','')),
-Open_Qty=convert(float,replace(Open_Qty,' ','')) 
+PO_Qty=convert(float,replace(PO_Qty,',','')),
+Open_Qty=convert(float,replace(Open_Qty,',','')) 
 from  ith60_t_download_nb_po where Plnt='TH60' and S_loc='IW03' 
 ) as a left join
 (select distinct POVendor=case when POVendor='IES' then 'CP81' when POVendor='ICC' then 'CP60' when POVendor='ITH' then 'TH02' when POVendor='ITH' then 'TH60' when POVendor='ITH' then 'TH05' else '' end,Material,MaterialETA,Remark 
