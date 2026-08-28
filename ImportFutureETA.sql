@@ -789,6 +789,7 @@ select * from LEN_OPO$
 */
 
 ------¬O§_¤J±b
+select * from (
 select Customer,Material,INVCHG=isnull(NewQty,0)-isnull(OldQty,0),ETA,Qty from 
 (
 select * from(
@@ -803,6 +804,7 @@ on a.MatNo=b.MatNo and a.Customer=b.Customer and a.MP=b.MP
 ) as a  right join
 (select Material,Customer,ETA,Qty from #SH_ETA where ETA=convert(char(10),getdate(),111)) as b on a.MatNo=Material and a.iCustomer=b.Customer
 ) as a
+) as a where INVCHG<>Qty
 order by Customer,Qty desc
 
 
